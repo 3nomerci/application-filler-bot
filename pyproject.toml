@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "application-filler-bot"
+version = "0.2.0"
+description = "A Docker-first Claude agent for job applications"
+requires-python = ">=3.12"
+dependencies = [
+  "playwright>=1.51,<2",
+  "pydantic>=2.10,<3",
+  "PyYAML>=6.0.2,<7",
+  "httpx>=0.28,<1",
+  "reportlab>=4.4,<5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1", "pypdf>=5,<7"]
+
+[project.scripts]
+application-filler = "application_filler.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/application_filler"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".cache", "private", "artifacts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

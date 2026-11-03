@@ -1,0 +1,85 @@
+name: application-filler
+
+x-browser: &browser
+  image: application-filler:0.2-local
+  build:
+    context: .
+    target: runtime
+  read_only: true
+  stdin_open: true
+  tty: true
+  ports: ["127.0.0.1:6080:6080"]
+  volumes:
+    - ./private:/app/private:ro
+    - ./artifacts:/app/artifacts
+  tmpfs: ["/tmp:size=1g,mode=1777"]
+  shm_size: 1gb
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+    - seccomp=./docker/seccomp_profile.json
+  pids_limit: 512
+  mem_limit: 3g
+  cpus: 2
+
+services:
+  gateway:
+    profiles: [live]
+    image: application-filler-gateway:0.2-local
+    build:
+      context: .
+      target: gateway
+    secrets: [anthropic_api_key]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 32
+    environment:
+      GATEWAY_MAX_REQUESTS: "200"
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    # No ports published; only containers in this Compose project can reach it.
+
+  agent:
+    <<: *browser
+    profiles: [live]
+    environment:
+      MODEL_GATEWAY_URL: http://gateway:8765
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  demo:
+    <<: *browser
+    profiles: [demo]
+    command: ["self-test", "--headless"]
+    # Scripted-model smoke test. Never reads a key or contacts Anthropic.
+
+  setup:
+    <<: *browser
+    profiles: [tools]
+    ports: []
+    volumes: ["./private:/app/private:rw"]
+    command: ["init", "--upgrade"]
+    # Initialization alone needs a writable private mount. Agent/demo keep it read-only.
+
+  test:
+    <<: *browser
+    profiles: [test]
+    image: application-filler-test:0.2-local
+    build:
+      context: .
+      target: test
+    ports: []
+    volumes: []
+    stdin_open: false
+    tty: false
+
+secrets:
+  anthropic_api_key:
+    file: ./.secrets/anthropic_api_key

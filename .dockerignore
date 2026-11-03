@@ -1,0 +1,13 @@
+*
+!pyproject.toml
+!uv.lock
+!src/
+!src/**
+!examples/
+!examples/**
+!docker/
+!docker/**
+!tests/
+!tests/**
+**/__pycache__/
+**/*.pyc

@@ -1,0 +1,81 @@
+# Setup copies this to private/instructions.yaml; only edit your private copy.
+# Comments are for humans. All instructions the agent must follow are real values below.
+version: 2
+
+candidate:
+  full_name: ""
+  first_name: ""
+  last_name: ""
+  email: ""
+  phone: ""
+  linkedin: ""
+  github: ""
+  address: ""
+  citizenships: [IT] # Tailored to the owner: Italian nationality only. Change for other users.
+  residence_country: null # Do not confuse nationality with residence.
+  existing_work_statuses: null # Unknown, not a claim that no statuses exist.
+  relocation: ""
+  start_date: ""
+
+instructions: >-
+  Apply for the jobs I provide using truthful facts and these preferences.
+  Read the job and the actual questions/options; do not expect me to know their wording.
+  Follow Apply links and relevant recruiting-platform handoffs. Work through multi-step forms.
+  Do not create accounts, take tests or interviews, buy anything, or bypass challenges.
+  I hold only Italian citizenship. Establish the actual work country before answering visa
+  or sponsorship questions. For ordinary employment in EU member states use EU-citizen
+  work rights, checking official guidance. Do not extend this to all of Europe or invent
+  a UK immigration status. Distinguish sponsorship from possession of a residence permit.
+  Ask if job location, personal status or question meaning cannot be established.
+
+answers:
+  mode: trusted # trusted: allow supported inference; review: approve inferred answers first.
+  topics:
+    work_authorization: infer
+    salary: infer
+    personal_disclosure: ask # Identity, disability, ethnicity, veteran/criminal history.
+    consent: ask # Set infer only with explicit consent instructions describing what you accept.
+
+salary:
+  strategy: market # market or low (lower defensible part of comparable pay, not arbitrary discount).
+  minimum: null # Optional, e.g. "EUR 50000 gross annual base".
+  instructions: >-
+    Research recent compensation for the role, seniority, work location and contract type.
+    Prefer a relevant advertised band. Use market for a supported central value, low for
+    the lower defensible part. Respect my minimum if supplied. Keep evidence URLs and pay
+    basis. Never mix gross/net, base/total, annual/monthly/hourly or currencies. Ask if the
+    evidence is weak or contradictory. Expected pay is not my previous salary.
+
+documents:
+  cv: cv.pdf # Put your approved fixed PDF in private/cv.pdf. Never modified by the agent.
+  cover_letter: trusted # trusted, review, or skip. Independent of final submission.
+  retention: keep # keep or delete_after_run; affects only generated cover-letter MD/PDF.
+  background: "" # Your truthful experience/skills/achievements; not a fictional example.
+  examples: [] # Optional .md/.txt filenames inside private/; influence style, not facts.
+  instructions: >-
+    Write a concise, specific cover letter for this employer and role, in the job's language.
+    Aim for 250–350 words unless the form gives another limit. Use only candidate facts and
+    my background as evidence. Use examples for tone and structure. Avoid generic praise,
+    invented qualifications or claims about the company that have not been verified.
+    Request input if my factual background is insufficient.
+
+navigation:
+  handoffs: trusted # trusted allows public HTTPS handoffs; ask blocks new navigation hosts.
+  allowed_hosts: [] # Only needed to preapprove extra hosts in ask mode.
+
+submission: manual # manual or auto. Trusting answers does not automatically permit submission.
+
+model:
+  id: claude-haiku-5-5 # This is a fixed snapshot ID, not a rolling alias.
+  effort: medium # low, medium, high. Adaptive thinking remains enabled.
+  max_output_tokens: 8192 # Includes thinking; per API request.
+  max_request_chars: 240000 # Application limit, not the model's context window.
+  max_calls_per_application: 40
+  max_calls_per_run: 100
+  estimated_budget_usd: 0.50 # Local estimate. Set provider spending limits as well.
+  web_searches_per_application: 6 # Set 0 to disable web tools; research-dependent answers then ask.
+
+browser:
+  delay_ms: 400
+  max_actions: 100
+  snapshot_chars: 18000
