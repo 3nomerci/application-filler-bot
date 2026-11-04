@@ -175,12 +175,10 @@ from the Docker build context.
 Local Compose secrets are **ordinary files on disk**, not an encrypted secrets vault.
 Someone with sufficient Windows or Docker permissions can read them. Your gateway
 and Anthropic must access the key to authenticate requests. The protection separates
-it from the agent/tools/websites; it cannot promise no other process could ever read it. Set a spending limit on the provider side!
+it from the agent/tools/websites; it cannot promise no other process could ever read it. I reccomend to set a spending limit on the provider side! You can switch off auto-reload so that API requests will stop when your balance runs out, set a monthly spend limit from the billing section, set a virtual card as payment method with limited credit. Note: the default monthly spend limit is now 200000$ (set by Anthropic).
 
 Keep `.secrets/` out of shared/cloud folders you do not trust. If exposed, revoke the
-key in Anthropic's console, replace the file and recreate the gateway. Old prototype
-`.env` files are not loaded. If you used one for a key, remove that old copy yourself
-after verifying the new setup.
+key in Anthropic's console, replace the file and recreate the gateway.
 
 **Candidate data is separate from the API credential.** Anthropic receives configured
 facts, background, style examples, visible page text and form values. Websites get
@@ -226,7 +224,7 @@ source. Unknown configuration keys and duplicate YAML keys are rejected.
 docker compose --env-file docker/compose.env run --rm --no-deps -T demo validate
 ```
 
-YAML comments are for humans and disappear during parsing. Required model guidance
+YAML comments are for you and disappear during parsing. Required model guidance
 belongs in actual values: `instructions`, `salary.instructions` and
 `documents.instructions` are all sent to Claude.
 
@@ -266,14 +264,13 @@ so you do not have to type the site's exact option label.
 
 ### Citizenship and work authorization
 
-The blueprint sets `citizenships: [IT]` for your Italian nationality. Other users must
-change it. Nationality does not establish residence or possession of a visa; supply
+The blueprint sets `citizenships: [IT]` for Italian nationality, change it if needed. Nationality does not establish residence or possession of a visa; supply
 those facts separately. "European role" is insufficient: actual work country matters.
 
 The model is instructed to consult official guidance for inferred answers and
 distinguish right to work, sponsorship, visa possession and registration. EU rights
-must not be extended indiscriminately to UK/non-EU roles. Ambiguity requires input.
-This is research-assisted reasoning, not a static immigration database or a legal
+should not be extended indiscriminately to UK/non-EU roles. Ambiguity requires input.
+This is research-assisted reasoning, not a static immigration database or a legals
 determination.
 
 ### Expected salary
@@ -296,7 +293,7 @@ require research then need user input. Source URLs and salary evidence go in rep
 
 `documents.cv: cv.pdf` refers to `private/cv.pdf`, an existing PDF within the private
 directory, at most 10 MB. It is uploaded unchanged. CV editing, LaTeX compilation and
-resume parsing are outside this version.
+resume parsing are outside this version and may be added in the future.
 
 Use `documents.background` for truthful experience and `documents.instructions` for
 writing preferences. Optional `.md`/`.txt` examples in `private/` influence style, not
@@ -338,8 +335,7 @@ configured approvals, budgets and restricted tool capabilities in force.
 
 ## Model and costs
 
-The client, schema and gateway pin **`claude-haiku-5-5`**. Anthropic documents this
-canonical ID as immutable despite no date suffix. Do not invent a dated variant.
+The client, schema and gateway pin **`claude-haiku-5-5`**.
 There is no automatic model/provider fallback. Official sources:
 [overview](https://platform.claude.com/docs/it/models/haiku-5-5/overview),
 [IDs/versioning](https://platform.claude.com/docs/it/about-claude/models/model-ids-and-versions),
@@ -360,8 +356,7 @@ next request. Temperature/top-p/top-k are not set.
 | `web_searches_per_application` | 6 | At most two search/fetch uses per request. |
 | `browser.max_actions` | 100 | Browser actions per application. |
 
-The previous 2,000-output-token/40,000-input-character limits were too restrictive
-for this workflow. Current limits allow thinking, tool schemas, instructions and job
+Current limits allow thinking, tool schemas, instructions and job
 context. Superseded browser snapshots are compacted. Instructions and full assistant
 content are preserved; exceeding the request budget stops instead of silently dropping
 important instructions.
@@ -377,8 +372,7 @@ and [fetch pricing](https://platform.claude.com/docs/en/agents-and-tools/tool-us
 The local budget is **not a hard billing cap**: research can add tokens, a failed
 request may be billed, and provider prices may change. Successful usage updates the
 estimate; errors consume a conservative reservation without automatic retry. Configure
-provider-side limits/alerts where available. Your $5 supports a small trial; it does
-not imply a guaranteed number of successful applications.
+provider-side limits/alerts where available.
 
 ## Reports and troubleshooting
 
@@ -472,6 +466,5 @@ not authentication.
 | `demo.py` | Fictional website and clearly separated scripted model double |
 
 No session resumption, saved logins, CV adaptation, interview automation or automatic
-provider fallback is implemented. Publishing to GitHub and choosing an open-source
-license remain separate decisions; these changes do not publish the repository.
+provider fallback is implemented.
 Third-party Playwright notices remain in `docker/`.

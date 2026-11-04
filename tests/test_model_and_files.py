@@ -8,7 +8,16 @@ from pydantic import ValidationError
 from pypdf import PdfReader
 
 from application_filler.cli import initialize
-from application_filler.config import MODEL_ID, Model, Settings, load_settings, private_file
+from application_filler.config import (
+    MODEL_ID,
+    ConfigurationError,
+    Documents,
+    Model,
+    Settings,
+    load_cover_letter_examples,
+    load_settings,
+    private_file,
+)
 from application_filler.documents import remove_generated, render_letter
 from application_filler.gateway import Gateway, serve
 from application_filler.llm import ClaudeClient, ModelError
@@ -36,6 +45,37 @@ def test_gateway_contains_key_and_sanitizes_errors():
     status, body = gateway.forward(request())
     assert status == 401 and sentinel not in json.dumps(body)
     assert gateway.forward(request())[0] == 429
+
+
+def test_provider_error_reaches_report_without_credential_or_headers():
+    secret = "FAKE-SECRET-ONLY-FOR-TEST"
+
+    def provider(req):
+        return httpx.Response(
+            400,
+            headers={"x-secret": secret},
+            json={
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": f"Invalid signature. Echoed credential: {secret}; "
+                    "sk-ant-fake-other-key",
+                },
+                "unrelated_private_body": secret,
+            },
+        )
+
+    gateway = Gateway(secret, transport=httpx.MockTransport(provider))
+
+    def relay(req):
+        status, body = gateway.forward(json.loads(req.content))
+        assert secret not in json.dumps(body) and "sk-ant" not in json.dumps(body)
+        assert "unrelated_private_body" not in body
+        return httpx.Response(status, json=body)
+
+    client = ClaudeClient(Model(), transport=httpx.MockTransport(relay))
+    with pytest.raises(ModelError, match=r"HTTP 400.*Invalid signature") as failure:
+        client.message("system", [], [])
+    assert secret not in str(failure.value)
 
 
 @pytest.mark.parametrize(
@@ -205,3 +245,27 @@ def test_migration_backs_up_and_preserves_explicit_ask(tmp_path, monkeypatch):
     before = target.read_bytes()
     initialize(upgrade=True)
     assert target.read_bytes() == before
+
+
+def test_examples_accept_yaml_letters_and_existing_files(tmp_path):
+    (tmp_path / "style.md").write_text("Example from file", encoding="utf-8")
+    path = tmp_path / "instructions.yaml"
+    path.write_text(
+        "version: 2\ndocuments:\n  examples:\n    - style.md\n    - |\n"
+        "      Dear Team,\n\n      A fictional example letter.\n",
+        encoding="utf-8",
+    )
+    settings = load_settings(path)
+    result = load_cover_letter_examples(tmp_path, settings.documents)
+    assert result == ["Example from file", "Dear Team,\n\nA fictional example letter.\n"]
+
+
+@pytest.mark.parametrize(
+    "entry", ["missing.md", "../outside.md", "X" * 5000, "\n" + "X" * 20001, "\n  \n"]
+)
+def test_bad_example_errors_do_not_echo_private_contents(tmp_path, entry):
+    with pytest.raises(ConfigurationError) as error:
+        load_cover_letter_examples(tmp_path, Documents(examples=[entry]))
+    assert "documents.examples[0]" in str(error.value)
+    assert "YAML '- |'" in str(error.value)
+    assert entry not in str(error.value)

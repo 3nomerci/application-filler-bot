@@ -7,6 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 MODEL_ID = "claude-haiku-5-5"  # Canonical immutable snapshot, per Anthropic's versioning policy.
 
 
+class ConfigurationError(ValueError):
+    """User-facing configuration error that never includes candidate values or file contents."""
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -39,7 +43,10 @@ class Documents(StrictModel):
     cover_letter: Literal["trusted", "review", "skip"] = "trusted"
     retention: Literal["keep", "delete_after_run"] = "keep"
     background: str = ""
-    examples: list[str] = Field(default_factory=list)
+    examples: list[str] = Field(
+        default_factory=list,
+        description="Private .md/.txt filenames or multiline letter text (YAML block scalar |).",
+    )
     instructions: str = "Write a specific, concise cover letter using only my supplied facts."
 
 
@@ -116,3 +123,28 @@ def private_file(root: Path, relative: str) -> Path:
     if path.stat().st_size > 10000000:
         raise ValueError("File exceeds 10 MB")
     return path
+
+
+def load_cover_letter_examples(root: Path, documents: Documents) -> list[str]:
+    examples = []
+    for index, entry in enumerate(documents.examples):
+        field = f"documents.examples[{index}]"
+        try:
+            if "\n" in entry or "\r" in entry:
+                text = entry
+            else:
+                path = private_file(root, entry)
+                if path.suffix.lower() not in {".md", ".txt"} or path.stat().st_size > 20000:
+                    raise ValueError
+                text = path.read_text(encoding="utf-8-sig")
+            if not text.strip() or len(text.encode("utf-8")) > 20000:
+                raise ValueError
+        except (OSError, ValueError, UnicodeError):
+            # OSError can echo the entire supplied letter as a supposed filename.
+            raise ConfigurationError(
+                f"{field}: use an existing UTF-8 .md/.txt file inside private/ "
+                "or paste multiline text using a YAML '- |' entry. "
+                "Each example must contain nonblank text and be at most 20 KB."
+            ) from None
+        examples.append(text)
+    return examples

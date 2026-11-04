@@ -27,17 +27,82 @@ def test_listing_redirect_multistep_attachments_confirmation(application):
         assert not reserve_submission(agent.artifacts / "submission-ledger", agent.url)
 
 
-def test_full_messages_client_gateway_and_browser_loop(application):
+def test_inline_cover_letter_no_longer_blocks_before_first_model_call(application):
+    with application() as a:
+        letter = "Dear fictional team,\n\n" + "Example style sentence. " * 40
+        a.settings.documents.examples = [letter]
+        prompt = a.prompt()
+        assert prompt.count("Dear fictional team,") == 1
+        assert "UNTRUSTED STYLE EXAMPLES" in prompt
+        report = a.run()
+        assert report["status"] == "submitted_confirmed", report
+        assert report["model_calls"] > 0
+
+
+def test_missing_example_reports_configuration_problem_before_model_call(application):
+    with application() as a:
+        a.settings.documents.examples = ["missing-letter.md"]
+        report = a.run()
+        assert report["status"] == "blocked"
+        assert report["model_calls"] == 0
+        assert "documents.examples[0]" in report["reason"]
+        assert "missing-letter.md" not in report["reason"]
+
+
+@pytest.mark.parametrize("thinking_starts_at", [1, 3])
+@pytest.mark.parametrize("exhaust_search_budget", [False, True])
+def test_full_messages_client_gateway_and_browser_loop(
+    application, thinking_starts_at, exhaust_search_budget
+):
     with application() as a:
         scripted = a.client
+        signed_prefixes = {}
+        if exhaust_search_budget:
+            a.settings.model.web_searches_per_application = 3
 
         def upstream(req):
             body = json.loads(req.content)
             assert req.headers["x-api-key"] == "FAKE-INTEGRATION-KEY"
+            # Enforce Haiku 5.5's prefix binding, not just unchanged signature text.
+            # Starting at turn 3 reproduces the timing in the user's failed demo.
+            for index, message in enumerate(body["messages"]):
+                if message["role"] != "assistant":
+                    continue
+                for block in message["content"]:
+                    if block["type"] != "thinking":
+                        continue
+                    prefix = {
+                        "system": body["system"],
+                        "tools": body["tools"],
+                        "messages": body["messages"][:index],
+                    }
+                    if prefix != signed_prefixes[block["signature"]]:
+                        return httpx.Response(
+                            400,
+                            json={
+                                "error": {
+                                    "type": "invalid_request_error",
+                                    "message": "Invalid signature in thinking block: "
+                                    "the preceding conversation was modified.",
+                                }
+                            },
+                        )
             response = scripted.message(body["system"], body["messages"], body["tools"])
-            response["content"].insert(
-                0, {"type": "thinking", "thinking": "", "signature": "opaque-test-signature"}
-            )
+            if scripted.calls >= thinking_starts_at:
+                signature = f"opaque-test-signature-{scripted.calls}"
+                signed_prefixes[signature] = {
+                    "system": body["system"],
+                    "tools": body["tools"],
+                    "messages": body["messages"],
+                }
+                response["content"].insert(
+                    0, {"type": "thinking", "thinking": "", "signature": signature}
+                )
+            if exhaust_search_budget and scripted.calls <= 3:
+                assert any(t.get("name") == "web_search" for t in body["tools"])
+                response["usage"] = {"server_tool_use": {"web_search_requests": 1}}
+            elif exhaust_search_budget:
+                assert not any(t.get("name") == "web_search" for t in body["tools"])
             return httpx.Response(200, json=response)
 
         gateway = Gateway("FAKE-INTEGRATION-KEY", transport=httpx.MockTransport(upstream))
@@ -52,10 +117,54 @@ def test_full_messages_client_gateway_and_browser_loop(application):
         assert report["status"] == "submitted_confirmed", report
         assert a.client.calls == scripted.calls
         assert all(
-            m["content"][0]["signature"] == "opaque-test-signature"
+            block["signature"] in signed_prefixes
             for m in a.messages
             if m["role"] == "assistant"
+            for block in m["content"]
+            if block["type"] == "thinking"
         )
+
+
+def test_model_can_recover_from_invalid_arguments_without_leaking_values(application):
+    with application() as a:
+        scripted = a.client.message
+        rejected = False
+
+        def message(system, messages, tools, searches):
+            nonlocal rejected
+            response = scripted(system, messages, tools, searches)
+            tool = next(b for b in response["content"] if b["type"] == "tool_use")
+            if tool["name"] == "answer_fields" and not rejected:
+                rejected = True
+                tool["input"]["answers"][0]["basis"] = "PRIVATE-INVALID-VALUE"
+            elif rejected and a.client.calls == 3:
+                result = messages[-1]["content"][0]
+                assert result["is_error"] is True
+                data = json.loads(result["content"])
+                assert data["issues"] == [{"field": "answers.0.basis", "problem": "literal_error"}]
+                assert "PRIVATE-INVALID-VALUE" not in result["content"]
+            return response
+
+        a.client.message = message
+        report = a.run()
+        assert report["status"] == "submitted_confirmed", report
+        assert report["tool_errors"][0]["issues"][0]["field"] == "answers.0.basis"
+        assert "PRIVATE-INVALID-VALUE" not in json.dumps(report)
+
+
+@pytest.mark.parametrize("source", ["full_name", "candidate.full_name"])
+def test_candidate_source_paths_are_unambiguous(application, source):
+    with application({"/": "<label>Name<input></label>"}) as a:
+        a.answer(
+            Answer(
+                ref=reference(a, "Name"),
+                source=source,
+                basis="profile",
+                category="general",
+                reason="Copy fact",
+            )
+        )
+        assert a.browser.page.locator("input").input_value() == "Alex Example"
 
 
 def test_iframe_srcdoc_and_apply_popup(application):

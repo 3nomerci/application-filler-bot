@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -55,8 +56,19 @@ class Gateway:
                     headers={"x-api-key": self._key, "anthropic-version": "2023-06-01"},
                 )
             if response.status_code != 200:
-                # Never forward provider error bodies, request dumps, credentials or stack traces.
-                return response.status_code, {"error": "provider_request_failed"}
+                # Return only the API's diagnostic message, never headers or response dumps.
+                # Redact credentials even if an upstream diagnostic unexpectedly echoes them.
+                diagnostic = {"error": "provider_request_failed"}
+                try:
+                    error = response.json().get("error", {})
+                    message = error.get("message") if isinstance(error, dict) else None
+                    if isinstance(message, str):
+                        message = message.replace(self._key, "[redacted]") if self._key else message
+                        message = re.sub(r"sk-[A-Za-z0-9_-]+", "[redacted]", message)
+                        diagnostic["detail"] = "".join(c for c in message if c.isprintable())[:800]
+                except (ValueError, AttributeError):
+                    pass
+                return response.status_code, diagnostic
             data = response.json()
             if self._key and self._key in json.dumps(data):
                 return 502, {"error": "invalid_provider_response"}

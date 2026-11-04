@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from .agent import ApplicationAgent
 from .browser import BrowserError, BrowserSession, NetworkGuard
-from .config import load_settings, load_yaml
+from .config import load_cover_letter_examples, load_settings, load_yaml
 from .demo import ScriptedDemoClient, demo_server, demo_settings
 from .documents import remove_generated, render_letter
 from .llm import ClaudeClient
@@ -225,7 +225,11 @@ def main():
             else load_settings(args.config)
         )
         if args.command == "validate":
-            print("Instructions valid. No API key was read and no API calls were made.")
+            load_cover_letter_examples(args.config.resolve().parent, settings.documents)
+            print(
+                "Instructions and cover-letter examples valid. "
+                "No API key was read and no API calls were made."
+            )
             return 0
         return run(args, settings)
     except ValidationError as exc:

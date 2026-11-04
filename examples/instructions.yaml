@@ -51,7 +51,7 @@ documents:
   cover_letter: trusted # trusted, review, or skip. Independent of final submission.
   retention: keep # keep or delete_after_run; affects only generated cover-letter MD/PDF.
   background: "" # Your truthful experience/skills/achievements; not a fictional example.
-  examples: [] # Optional .md/.txt filenames inside private/; influence style, not facts.
+  examples: [] # Private .md/.txt filenames or multiline text using '- |'; style, not facts.
   instructions: >-
     Write a concise, specific cover letter for this employer and role, in the job's language.
     Aim for 250–350 words unless the form gives another limit. Use only candidate facts and

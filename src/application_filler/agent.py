@@ -12,7 +12,13 @@ from playwright.sync_api import Error as PlaywrightError
 from pydantic import Field, ValidationError
 
 from .browser import BrowserError, BrowserSession
-from .config import Settings, StrictModel, private_file
+from .config import (
+    ConfigurationError,
+    Settings,
+    StrictModel,
+    load_cover_letter_examples,
+    private_file,
+)
 from .documents import render_letter
 from .llm import ModelError
 
@@ -95,7 +101,11 @@ class SalaryEvidence(StrictModel):
 class Answer(StrictModel):
     ref: str
     value: str | bool | None = None
-    source: str | None = None
+    source: str | None = Field(
+        default=None,
+        description="Dotted candidate fact key, e.g. full_name or candidate.full_name. "
+        "Use this to copy a supplied fact; omit value for exact copying.",
+    )
     category: Literal[
         "general", "work_authorization", "salary", "personal_disclosure", "consent", "cover_letter"
     ]
@@ -236,12 +246,9 @@ class ApplicationAgent:
 
     def prompt(self) -> str:
         data = self.settings.model_dump(exclude={"model", "browser"})
-        examples = []
-        for name in self.settings.documents.examples:
-            path = private_file(self.private, name)
-            if path.suffix not in {".txt", ".md"} or path.stat().st_size > 20000:
-                raise ValueError("Cover-letter examples must be .txt/.md files under 20 KB")
-            examples.append(path.read_text(encoding="utf-8-sig"))
+        examples = load_cover_letter_examples(self.private, self.settings.documents)
+        # Style references are untrusted data, not instructions, and are sent only once.
+        data["documents"].pop("examples", None)
         return (
             SYSTEM
             + "\nUSER FACTS AND PERMISSIONS:\n"
@@ -260,7 +267,7 @@ class ApplicationAgent:
         value = answer.value
         if answer.source is not None:
             fact = self.settings.candidate
-            for part in answer.source.split("."):
+            for part in answer.source.removeprefix("candidate.").split("."):
                 fact = fact.get(part) if isinstance(fact, dict) else None
             if type(fact) not in {str, bool, int, float} or fact == "":
                 raise BrowserError("Source must identify an explicit scalar candidate fact")
@@ -359,6 +366,11 @@ class ApplicationAgent:
                             else "Field action failed; inspect the current page",
                         }
                     )
+            failed = [r for r in results if "error" in r]
+            if failed:
+                self.report.setdefault("tool_errors", []).append(
+                    {"tool": "answer_fields", "fields": failed}
+                )
             return {"results": results, "page": self.browser.inspect()}
         elif name == "request_input":
             if not self.interactive:
@@ -507,8 +519,16 @@ class ApplicationAgent:
                     ),
                 }
             ]
+            search_tool_limit = min(self.settings.model.web_searches_per_application, 2)
             for _ in range(self.settings.model.max_calls_per_application):
                 remaining = max(0, self.settings.model.web_searches_per_application - self.searches)
+                next_limit = min(remaining, 2)
+                if next_limit != search_tool_limit:
+                    # Changing hosted-tool availability also changes the signed prefix.
+                    # At this explicit budget boundary, retire all bound reasoning together;
+                    # retain text, calls, results and sources. Never mix stale/new reasoning.
+                    self.retire_bound_thinking()
+                    search_tool_limit = next_limit
                 response = self.client.message(system, self.messages, TOOLS, remaining)
                 content = response["content"]
                 self.collect_sources(content)
@@ -529,10 +549,15 @@ class ApplicationAgent:
                     else:
                         try:
                             result = self.execute(use["name"], use["input"])
+                        except ValidationError as exc:
+                            issues = [
+                                {"field": ".".join(map(str, e["loc"])), "problem": e["type"]}
+                                for e in exc.errors(include_input=False, include_context=False)
+                            ]
+                            result = {"error": "Invalid tool arguments", "issues": issues}
                         except (
                             BrowserError,
                             ValueError,
-                            ValidationError,
                             PlaywrightError,
                             OSError,
                         ) as exc:
@@ -542,18 +567,22 @@ class ApplicationAgent:
                                 else "Tool input or website action failed. "
                                 "Inspect and correct; do not repeat blindly."
                             }
+                        if "error" in result:
+                            self.report.setdefault("tool_errors", []).append(
+                                {"tool": tool_name, **result}
+                            )
                     results.append(
                         {
                             "type": "tool_result",
                             "tool_use_id": use["id"],
                             "content": json.dumps(result, ensure_ascii=False),
+                            "is_error": "error" in result,
                         }
                     )
                 if self.done:
                     break
                 if results:
                     self.messages.append({"role": "user", "content": results})
-                    self.compact_observations()
                 elif response.get("stop_reason") != "pause_turn":
                     self.messages.append(
                         {
@@ -567,7 +596,7 @@ class ApplicationAgent:
         except (ModelError, BrowserError, PlaywrightError, ValueError, OSError) as exc:
             self.report["reason"] = (
                 str(exc)
-                if isinstance(exc, (ModelError, BrowserError))
+                if isinstance(exc, (ModelError, BrowserError, ConfigurationError))
                 else "Application failed; review required"
             )
         finally:
@@ -578,21 +607,20 @@ class ApplicationAgent:
             self.report["web_searches"] = self.searches
         return self.report
 
-    def compact_observations(self):
-        # Keep the initial job page and latest two tool observations. Preserve assistant
-        # thinking/signatures/server results verbatim, as required by the Messages API.
-        for message in self.messages[1:-4]:
-            if message["role"] != "user" or not isinstance(message["content"], list):
-                continue
-            for block in message["content"]:
-                if block.get("type") != "tool_result":
+    def retire_bound_thinking(self):
+        # Haiku 5.5 signs the full prefix, including tools and preceding user messages.
+        # Ordinary turns are append-only: no shortening of old page observations.
+        # See https://platform.claude.com/docs/en/build-with-claude/preserved-thinking
+        retained = []
+        for message in self.messages:
+            if message["role"] == "assistant":
+                content = [
+                    b
+                    for b in message["content"]
+                    if b["type"] not in {"thinking", "redacted_thinking"}
+                ]
+                if not content:
                     continue
-                try:
-                    data = json.loads(block["content"])
-                except (ValueError, TypeError):
-                    continue
-                if "page" in data:
-                    data["page"] = {"note": "Superseded observation; use the latest refs"}
-                elif "controls" in data:
-                    data = {"note": "Superseded observation; use the latest refs"}
-                block["content"] = json.dumps(data, ensure_ascii=False)
+                message = {**message, "content": content}
+            retained.append(message)
+        self.messages = retained

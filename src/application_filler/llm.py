@@ -54,10 +54,18 @@ class ClaudeClient:
             raise ModelError("Local estimated cost budget reached")
         self.calls += 1
         status = None
+        provider_detail = ""
         try:
             with httpx.Client(timeout=190, transport=self.transport, trust_env=False) as client:
                 response = client.post(self.endpoint + "/v1/messages", json=body)
                 status = response.status_code
+                if response.is_error:
+                    try:
+                        detail = response.json().get("detail", "")
+                        if isinstance(detail, str):
+                            provider_detail = "".join(c for c in detail if c.isprintable())[:800]
+                    except (ValueError, AttributeError):
+                        pass
                 response.raise_for_status()
                 data = response.json()
             if data.get("model") != MODEL_ID or not isinstance(data.get("content"), list):
@@ -65,9 +73,9 @@ class ClaudeClient:
         except (httpx.HTTPError, ValueError):
             self.estimated_usd += reservation
             detail = f" (HTTP {status})" if status is not None else ""
+            hint = provider_detail or "Check gateway status and provider access."
             raise ModelError(
-                f"Model request failed{detail}. Check gateway status, credits and model access. "
-                "No automatic API retry was made."
+                f"Model request failed{detail}. {hint} No automatic API retry was made."
             ) from None
         usage = data.get("usage", {})
         inputs = sum(
