@@ -75,13 +75,11 @@ can also start it from the repository root in PowerShell:
 Start-Process .\config-editor\index.html
 ```
 
-The editor runs locally and offline, with **no Python, Node.js, installation or
-server required**. The bot and its validator continue to run inside Docker.
+The editor runs locally and offline.
 
 1. Click **Open configuration** and select `private/instructions.yaml`, or start with **New**.
 2. Fill in the sections using plain text, without surrounding quotation marks.
    Empty text fields show examples; date fields use the format shown by your browser.
-   **?** opens extra details where helpful. Examples do not fill in your personal facts.
 3. In **Documents & cover letters**, use **Upload CV PDF** to select your finished
    PDF (up to 10 MB). Add your own factual background separately: the bot does not
    extract it from the CV. Optional past letters guide style; writing instructions
@@ -93,7 +91,7 @@ server required**. The bot and its validator continue to run inside Docker.
 5. Run the Docker validation command in section 3 before running the bot. The editor
    checks syntax and settings; Docker validation also checks referenced letter files.
 
-The editor uses a consistent light appearance, including when your system uses dark mode. See the
+See the
 [editor guide](config-editor/README.md) for browser support and saving details.
 
 | Section | What to provide |
