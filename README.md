@@ -59,10 +59,41 @@ native browser executor without an API key or paid calls.
 
 ## 2. Enter your information and instructions
 
-**Edit `private/instructions.yaml` in a text editor.** It is your local copy of the
+**Open [config-editor/index.html](config-editor/index.html) in your browser** to use
+the guided configuration editor (reccomended), or edit `private/instructions.yaml` in a text editor.
+The file is your local copy of the
 [annotated template](examples/instructions.yaml). Edit the private copy, not the
 public template. Nothing in the template claims a nationality, qualification or
 personal status for you.
+
+### Optional guided editor
+
+Double-click **`config-editor/index.html`** in your file manager. On Windows you
+can also start it from the repository root in PowerShell:
+
+```powershell
+Start-Process .\config-editor\index.html
+```
+
+The editor runs locally and offline, with **no Python, Node.js, installation or
+server required**. The bot and its validator continue to run inside Docker.
+
+1. Click **Open YAML** and select `private/instructions.yaml`, or start with **New**.
+2. Fill in the sections. Every field shows example YAML and guidance; **?** opens
+   additional help. Examples are fictional and do not fill in your personal facts.
+3. In **Documents & cover letters**, use **Upload CV PDF** to select your finished
+   PDF (up to 10 MB). Add your own factual background separately: the bot does not
+   extract it from the CV. Optional past letters guide style; writing instructions
+   control tone, language, length and emphasis.
+4. Where available, **Save to private/** lets you choose the repository's `private/`
+   folder and save `instructions.yaml` and the selected PDF together. Otherwise use
+   **Save file** / **Download** for YAML and **Download selected PDF** for the CV,
+   then move both to `private/`. Selecting a PDF alone does not copy it there.
+5. Run the Docker validation command in section 3 before running the bot. The editor
+   checks syntax and settings; Docker validation also checks referenced letter files.
+
+The page follows your system's light or dark appearance. See the
+[editor guide](config-editor/README.md) for browser support and saving details.
 
 | Section | What to provide |
 |---|---|

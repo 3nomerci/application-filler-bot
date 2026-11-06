@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Application Filler · Configuration editor</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="vendor/yaml.js"></script>
+  <script defer src="contract.js"></script>
+  <script defer src="schema.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Configuration sections">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">AF</span>
+        <div><strong>Application Filler</strong><span>Configuration editor</span></div>
+      </div>
+      <div class="sidebar-label">CONFIGURE</div>
+      <nav id="section-nav" aria-label="Sections"></nav>
+      <div class="sidebar-foot">
+        <span class="privacy-indicator" aria-hidden="true"></span>
+        Local & offline. No data is uploaded.
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="file-status">
+          <span id="file-name">New configuration</span>
+          <span id="dirty-indicator" class="unsaved" hidden>Unsaved changes</span>
+        </div>
+        <div class="toolbar">
+          <button id="new-button" class="button ghost" type="button">New</button>
+          <button id="open-button" class="button secondary" type="button">Open YAML</button>
+          <button id="download-button" class="button secondary" type="button">Download</button>
+          <button id="save-button" class="button primary" type="button">Save file</button>
+          <button id="save-folder-button" class="button secondary" type="button" hidden>Save to private/</button>
+          <input id="file-input" type="file" accept=".yaml,.yml,text/yaml,text/plain" hidden>
+        </div>
+      </header>
+
+      <div class="page">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow" id="section-eyebrow">PROFILE</p>
+            <h1 id="section-title">Personal information</h1>
+            <p id="section-description" class="description"></p>
+          </div>
+          <span class="help-hint"><span class="help-symbol" aria-hidden="true">?</span> More help · examples below each field</span>
+        </div>
+        <div id="notices" class="notices" aria-live="polite"></div>
+        <section id="fields" class="fields" aria-label="Configuration fields"></section>
+        <div id="raw-panel" hidden>
+          <div class="raw-intro">Advanced mode: edit the YAML directly. Changes made here are used when you return to a form section or save the file.</div>
+          <label for="raw-text" class="raw-label">instructions.yaml</label>
+          <textarea id="raw-text" class="raw-text" spellcheck="false" autocomplete="off"></textarea>
+          <p class="microcopy">The editor checks YAML syntax and the bot's version 2 settings schema. Run <code>demo validate</code> after saving to check referenced example files too.</p>
+        </div>
+        <footer class="page-footer">
+          <span>Edits stay on your device. The editor does not run the bot.</span>
+          <span id="summary-status" aria-live="polite"></span>
+        </footer>
+      </div>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
