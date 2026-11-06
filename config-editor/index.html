@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="light">
   <title>Application Filler · Configuration editor</title>
   <link rel="stylesheet" href="styles.css">
   <script defer src="vendor/yaml.js"></script>
@@ -34,10 +34,10 @@
         </div>
         <div class="toolbar">
           <button id="new-button" class="button ghost" type="button">New</button>
-          <button id="open-button" class="button secondary" type="button">Open YAML</button>
+          <button id="open-button" class="button secondary" type="button">Open configuration</button>
           <button id="download-button" class="button secondary" type="button">Download</button>
-          <button id="save-button" class="button primary" type="button">Save file</button>
-          <button id="save-folder-button" class="button secondary" type="button" hidden>Save to private/</button>
+          <button id="save-button" class="button secondary" type="button">Save file</button>
+          <button id="save-folder-button" class="button primary" type="button">Save to private/</button>
           <input id="file-input" type="file" accept=".yaml,.yml,text/yaml,text/plain" hidden>
         </div>
       </header>
@@ -49,15 +49,17 @@
             <h1 id="section-title">Personal information</h1>
             <p id="section-description" class="description"></p>
           </div>
-          <span class="help-hint"><span class="help-symbol" aria-hidden="true">?</span> More help · examples below each field</span>
+          <span class="help-hint"><span class="help-symbol" aria-hidden="true">?</span> Extra details where needed</span>
         </div>
+        <p id="entry-guidance" class="entry-guidance">Enter plain text without surrounding quotation marks. Examples inside empty fields are suggestions; replace them with your own information.</p>
+        <p id="save-guidance" class="microcopy" hidden>Your browser cannot write directly to a folder. Download your configuration and selected PDF, then move them into the repository’s private/ folder.</p>
         <div id="notices" class="notices" aria-live="polite"></div>
         <section id="fields" class="fields" aria-label="Configuration fields"></section>
         <div id="raw-panel" hidden>
-          <div class="raw-intro">Advanced mode: edit the YAML directly. Changes made here are used when you return to a form section or save the file.</div>
+          <div class="raw-intro">Edit the underlying configuration directly. Preserve its structure; changes apply when you return to the form or save.</div>
           <label for="raw-text" class="raw-label">instructions.yaml</label>
           <textarea id="raw-text" class="raw-text" spellcheck="false" autocomplete="off"></textarea>
-          <p class="microcopy">The editor checks YAML syntax and the bot's version 2 settings schema. Run <code>demo validate</code> after saving to check referenced example files too.</p>
+          <p class="microcopy">The editor checks file structure and supported settings. Run the bot’s validation command after saving to check referenced example files too.</p>
         </div>
         <footer class="page-footer">
           <span>Edits stay on your device. The editor does not run the bot.</span>

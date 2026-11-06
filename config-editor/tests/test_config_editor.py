@@ -34,7 +34,7 @@ def editor(chromium):
 
 
 def raw_yaml(page, source):
-    page.get_by_role("button", name="Raw YAML", exact=True).click()
+    page.get_by_role("button", name="Advanced file editor", exact=True).click()
     page.locator("#raw-text").fill(source)
 
 
@@ -54,7 +54,7 @@ def test_editor_contract_tracks_python_settings():
     assert defaults == Settings().model_dump(mode="json")
 
 
-def test_every_field_has_visible_examples_and_export_matches_bot(editor, tmp_path):
+def test_form_guidance_uses_plain_input_examples_and_export_matches_bot(editor, tmp_path):
     schema = editor.evaluate("window.CONFIG_SCHEMA")
     for section in schema:
         if section["id"] == "raw":
@@ -63,10 +63,91 @@ def test_every_field_has_visible_examples_and_export_matches_bot(editor, tmp_pat
         cards = editor.locator(".field-card")
         assert cards.count() == len(section["fields"])
         for index in range(cards.count()):
-            expect(cards.nth(index).locator(".field-example")).to_be_visible()
-            assert cards.nth(index).locator(".field-example pre").inner_text().strip()
+            card = cards.nth(index)
+            expect(card.locator(".field-description")).to_be_visible()
+            assert "yaml" not in card.inner_text().lower()
+            assert card.locator("pre, .field-example").count() == 0
+            controls = card.locator('.field-input:not([type="date"]), .field-textarea')
+            for control in controls.all():
+                assert control.get_attribute("placeholder")
+                assert ": |-" not in control.get_attribute("placeholder")
     settings = export_settings(editor, tmp_path)
     assert settings == load_settings(ROOT / "examples" / "instructions.yaml")
+
+
+def test_help_adds_details_without_repeating_caption_or_losing_input(editor):
+    assert editor.get_by_role("button", name="More about Full name", exact=True).count() == 0
+    editor.get_by_role("button", name="Salary preferences", exact=True).click()
+    minimum = editor.locator("#field-salary-minimum")
+    minimum.fill("EUR 50000 gross annual base")
+    button = editor.get_by_role("button", name="More about Salary strategy", exact=True)
+    button.click()
+    hint = editor.locator("#field-salary-strategy-description").inner_text()
+    help_panel = editor.locator("#field-salary-strategy-help")
+    expect(help_panel).to_be_visible()
+    details = help_panel.inner_text()
+    assert hint not in details
+    assert "employer’s advertised salary band" in details
+    assert "seniority" in details
+    assert "40,000" in details
+    expect(minimum).to_have_value("EUR 50000 gross annual base")
+    button.click()
+    expect(help_panel).to_be_hidden()
+
+
+def test_prefilled_cover_instructions_are_shown_once_and_empty_examples_stay_unsaved(
+    editor, tmp_path
+):
+    editor.get_by_role("button", name="Documents & cover letters", exact=True).click()
+    instructions = editor.locator("#field-documents-instructions")
+    assert instructions.input_value().strip()
+    assert not instructions.evaluate("node => node.matches(':placeholder-shown')")
+    card = instructions.locator("..")
+    assert card.locator(".field-textarea").count() == 1
+    assert card.locator("pre, .field-example").count() == 0
+    background = editor.locator("#field-documents-background")
+    expect(background).to_have_value("")
+    assert background.evaluate("node => node.matches(':placeholder-shown')")
+    assert export_settings(editor, tmp_path).documents.background == ""
+
+
+@pytest.mark.parametrize("locale", ["it-IT", "en-US"])
+def test_dates_follow_browser_input_and_export_as_bot_dates(chromium, tmp_path, locale):
+    context = chromium.new_context(accept_downloads=True, offline=True, locale=locale)
+    try:
+        page = context.new_page()
+        page.goto((EDITOR / "index.html").as_uri())
+        birth = page.locator("#field-candidate-date_of_birth")
+        assert birth.get_attribute("type") == "date"
+        hint = page.locator("#field-candidate-date_of_birth-description").inner_text()
+        assert "date order shown" in hint
+        assert not re.search(r"yyyy|YYYY|YYYY-MM-DD|gg/mm", hint)
+        birth.fill("2000-12-31")
+        page.get_by_role("button", name="Education", exact=True).click()
+        page.locator("#field-candidate-education-bachelors-start_date").fill("2021-09-01")
+        settings = export_settings(page, tmp_path)
+        assert settings.candidate["date_of_birth"] == "2000-12-31"
+        assert settings.candidate["education"]["bachelors"]["start_date"] == "2021-09-01"
+    finally:
+        context.close()
+
+
+def test_relocation_choices_export_without_typing_programming_values(editor, tmp_path):
+    select = editor.locator("#field-candidate-relocation")
+    select.select_option("yes")
+    assert export_settings(editor, tmp_path).candidate["relocation"] is True
+    select.select_option("no")
+    assert export_settings(editor, tmp_path).candidate["relocation"] is False
+    select.select_option("unknown")
+    assert export_settings(editor, tmp_path).candidate["relocation"] is None
+    select.select_option("specific")
+    editor.get_by_label("Where would you relocate?", exact=True).fill(
+        "Open to relocating within the EU"
+    )
+    assert (
+        export_settings(editor, tmp_path).candidate["relocation"]
+        == "Open to relocating within the EU"
+    )
 
 
 def test_form_export_preserves_text_types_and_multiline_examples(editor, tmp_path):
@@ -218,6 +299,7 @@ def test_save_private_folder_writes_yaml_and_unchanged_pdf(editor, tmp_path):
         })
       });""")
     editor.reload()
+    assert editor.locator(".toolbar .primary").get_attribute("id") == "save-folder-button"
     editor.get_by_role("button", name="Documents & cover letters", exact=True).click()
     original = b"%PDF-1.4\n%%EOF\n"
     editor.locator("#cv-file-input").set_input_files(
@@ -233,12 +315,26 @@ def test_save_private_folder_writes_yaml_and_unchanged_pdf(editor, tmp_path):
     assert load_settings(path).documents.cv == "cv.pdf"
 
 
-def test_dark_mode_and_mobile_remain_readable(editor):
-    editor.emulate_media(color_scheme="dark")
-    assert (
-        editor.locator("body").evaluate("el => getComputedStyle(el).color") == "rgb(225, 233, 245)"
+def test_primary_save_has_a_download_fallback_without_folder_access(editor, tmp_path):
+    editor.add_init_script(
+        "Object.defineProperty(window, 'showDirectoryPicker', {value: undefined});"
     )
-    for selector in [".field-input", ".field-card", ".field-example pre", ".notice.warning"]:
+    editor.reload()
+    button = editor.get_by_role("button", name="Download for private/", exact=True)
+    expect(button).to_be_visible()
+    assert editor.locator(".toolbar .primary").get_attribute("id") == "save-folder-button"
+    expect(editor.locator("#save-guidance")).to_be_visible()
+    with editor.expect_download() as event:
+        button.click()
+    path = tmp_path / event.value.suggested_filename
+    event.value.save_as(path)
+    assert load_settings(path).version == 2
+
+
+def test_system_dark_mode_keeps_the_light_theme_and_mobile_layout(editor):
+    editor.emulate_media(color_scheme="dark")
+    assert editor.locator("html").evaluate("el => getComputedStyle(el).colorScheme") == "light only"
+    for selector in [".field-input", ".field-card", ".notice.warning"]:
         colors = editor.locator(selector).first.evaluate(
             "el => [getComputedStyle(el).color, getComputedStyle(el).backgroundColor]"
         )
@@ -252,6 +348,7 @@ def test_dark_mode_and_mobile_remain_readable(editor):
 
         light, dark = sorted(map(luminance, colors), reverse=True)
         assert (light + 0.05) / (dark + 0.05) >= 4.5
-        assert colors[1] != "rgb(255, 255, 255)"
+        if selector != ".notice.warning":
+            assert colors[1] == "rgb(255, 255, 255)"
     editor.set_viewport_size({"width": 390, "height": 844})
     assert editor.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

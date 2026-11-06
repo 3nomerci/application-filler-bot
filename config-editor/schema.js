@@ -1,188 +1,227 @@
-/* Public, declarative field definitions. No personal information is embedded. */
+/* Form guidance uses plain input examples; file syntax is handled by the editor. */
 (() => {
   'use strict';
 
-  const field = (path, label, type, explanation, example, options = {}) => ({
-    path, label, type, explanation, example, ...options
+  const field = (path, label, type, hint, options = {}) => ({
+    path, label, type, hint, ...options
   });
+  const topicChoices = [['infer', 'Answer using supplied facts and research'], ['ask', 'Ask me'], ['skip', 'Skip this topic']];
 
   window.CONFIG_SCHEMA = [
     {
       id: 'profile', title: 'Personal information', eyebrow: 'PROFILE',
-      description: 'Facts used to fill applications. Leave unknown information unknown; do not guess.',
+      description: 'Your contact details and application facts. Leave information you do not know blank.',
       fields: [
-        field('candidate.full_name', 'Full name', 'text', 'Your complete legal or preferred application name, as appropriate for your documents. Keep it consistent with your CV.', 'candidate:\n  full_name: "Alex Example"'),
-        field('candidate.first_name', 'First name', 'text', 'Given name used when the form asks for first name separately.', 'first_name: "Alex"'),
-        field('candidate.last_name', 'Last name', 'text', 'Family name or surname used when the form asks separately.', 'last_name: "Example"'),
-        field('candidate.email', 'Email', 'email', 'Email address on which employers should contact you. It should be an address you can access.', 'email: "alex@example.com"'),
-        field('candidate.phone', 'Phone number', 'text', 'Telephone number including the international dialling prefix. Keeping the +country code makes this work across countries.', 'phone: "+12025550123"'),
-        field('candidate.date_of_birth', 'Date of birth', 'date', 'Optional birth date, in YYYY-MM-DD format. Leave blank if you do not want to supply it. Missing is not the same as a negative answer.', 'date_of_birth: "2000-12-31"\n# or: date_of_birth: null'),
-        field('candidate.linkedin', 'LinkedIn URL', 'url', 'Public profile URL. Leave blank if you do not have one.', 'linkedin: "https://www.linkedin.com/in/alex-example"'),
-        field('candidate.github', 'GitHub URL', 'url', 'Public GitHub profile. This is optional.', 'github: "https://github.com/alex-example"'),
-        field('candidate.website', 'Website / portfolio', 'url', 'An optional personal site or portfolio URL, if relevant to the applications.', 'website: "https://example.com/portfolio"'),
-        field('candidate.address', 'Street address', 'text', 'Street and house number if you want the agent to use a postal address. Omit if you prefer not to share it.', 'address: "123 Example Street"'),
-        field('candidate.city', 'City', 'text', 'Current city. This is different from the cities where you are willing to work.', 'city: "Toronto"'),
-        field('candidate.region', 'Region / state', 'text', 'State, province or administrative region for your residence.', 'region: "Ontario"'),
-        field('candidate.postal_code', 'Postal code', 'text', 'Postal or ZIP code in your current address. Keep leading zeroes by treating it as text.', 'postal_code: "01234"'),
-        field('candidate.country', 'Address country', 'text', 'Country appearing in the postal address; distinct from citizenship and residence status.', 'country: "Canada"'),
-        field('candidate.citizenships', 'Citizenships', 'tags', 'List the country codes of nationalities you actually hold. This affects work-authorisation questions; do not infer citizenship from where you live.', 'citizenships: [IT]\n# or: citizenships: [CA, FR]', { placeholder: 'e.g. IT, FR' }),
-        field('candidate.residence_country', 'Country of residence', 'nullable', 'Country in which you live today. This is not necessarily the same as citizenship or existing work authorisation.', 'residence_country: "CA"\n# or: residence_country: null'),
-        field('candidate.existing_work_statuses', 'Existing work statuses', 'nullable', 'Work permits or other existing authorisations that you can truthfully claim. Leave unknown instead of assuming you have no right to work.', 'existing_work_statuses: "EU citizen with EU work rights"\n# or: existing_work_statuses: null', { wide: true }),
-        field('candidate.relocation', 'Relocation preference', 'flex', 'Accepts true (willing), false (not willing), a specific text preference, or null (unknown). Text may be more informative than a simple yes/no.', 'relocation: true\n# or: relocation: "Open to relocating within the EU"'),
-        field('candidate.start_date', 'Availability / start date', 'text', 'When you can start working. Can be a descriptive preference or a calendar date; use the wording that accurately describes your availability.', 'start_date: "Immediately"\n# or: start_date: "2027-01-15"'),
-        field('candidate.protected_category_member', 'Protected-category membership', 'select', 'Controls a special protected-category policy for employment forms. Use Unknown unless you explicitly know whether the configured category applies; this is not a general demographic disclosure setting.', 'protected_category_member: null\n# or: protected_category_member: false', { choices: [['null', 'Unknown / ask'], ['true', 'Yes'], ['false', 'No']], nullableBoolean: true })
+        field('candidate.full_name', 'Full name', 'text', 'Use the name you want employers to see.', { placeholder: 'Alex Example' }),
+        field('candidate.first_name', 'First name', 'text', 'Your given name.', { placeholder: 'Alex' }),
+        field('candidate.last_name', 'Last name', 'text', 'Your family name or surname.', { placeholder: 'Example' }),
+        field('candidate.email', 'Email', 'email', 'An address where employers can contact you.', { placeholder: 'alex@example.com' }),
+        field('candidate.phone', 'Phone number', 'text', 'Include the international country code.', { placeholder: '+39 312 345 6789' }),
+        field('candidate.date_of_birth', 'Date of birth', 'date', 'Optional. Use the calendar or the date order shown in this field.'),
+        field('candidate.linkedin', 'LinkedIn URL', 'url', 'Paste your public profile link, or leave blank.', { placeholder: 'https://www.linkedin.com/in/alex-example' }),
+        field('candidate.github', 'GitHub URL', 'url', 'Paste your GitHub profile link, or leave blank.', { placeholder: 'https://github.com/alex-example' }),
+        field('candidate.website', 'Website / portfolio', 'url', 'Your personal website or portfolio, if you have one.', { placeholder: 'https://example.com/portfolio' }),
+        field('candidate.address', 'Street address', 'text', 'Street name and house number. Optional.', { placeholder: '123 Example Street' }),
+        field('candidate.city', 'City', 'text', 'The city where you currently live.', { placeholder: 'Toronto' }),
+        field('candidate.region', 'Region / state', 'text', 'Your state, province or region.', { placeholder: 'Ontario' }),
+        field('candidate.postal_code', 'Postal code', 'text', 'Enter the full postal code, including any leading zeroes.', { placeholder: '00123' }),
+        field('candidate.country', 'Address country', 'text', 'The country in your postal address.', { placeholder: 'Canada' }),
+        field('candidate.citizenships', 'Citizenships', 'tags', 'Use country codes separated by commas, such as IT, FR.', {
+          placeholder: 'IT, FR',
+          help: 'Include only nationalities you actually hold. Living in a country or having a work permit there does not make it a citizenship. The bot uses these facts when checking work rights.'
+        }),
+        field('candidate.residence_country', 'Country of residence', 'nullable', 'The country where you live today. Leave blank if unknown.', { placeholder: 'Italy' }),
+        field('candidate.existing_work_statuses', 'Existing work statuses', 'nullable', 'Describe citizenship-based work rights or permits you already hold. Leave blank if unknown.', {
+          placeholder: 'Italian citizen with EU work rights', wide: true,
+          help: 'Being employed or unemployed is not a work-authorization status. If relevant, include the permit type, country and expiry date. The bot must distinguish existing permission from needing employer sponsorship.'
+        }),
+        field('candidate.relocation', 'Relocation preference', 'relocation', 'Choose whether you would move for a job, or describe where you would move.', { placeholder: 'Open to relocating within the EU' }),
+        field('candidate.start_date', 'Availability / start date', 'text', 'Describe when you could start work.', { placeholder: 'Immediately, or after a two-month notice period' }),
+        field('candidate.protected_category_member', 'Protected-category membership', 'select', 'Choose Unknown if you are unsure whether the employment category applies to you.', {
+          choices: [['null', 'Unknown / ask me'], ['true', 'Yes'], ['false', 'No']], nullableBoolean: true,
+          help: 'Some countries have legally defined employment categories, such as Italy’s categorie protette. This fact works with the protected-category policy in Agent behavior; other demographic and disability questions follow the personal-disclosure policy.'
+        })
       ]
     },
     {
       id: 'education', title: 'Education', eyebrow: 'PROFILE',
-      description: 'Academic credentials and dates. Use exact facts or leave the fields blank.',
+      description: 'Your institutions and study dates. Leave dates blank when you do not know the full date.',
       fields: [
-        field('candidate.education.bachelors.institution', 'Bachelor’s institution', 'text', 'Official name of the school or university that awarded or will award your bachelor’s degree.', 'institution: "University of Example"'),
-        field('candidate.education.bachelors.institution_local_name', 'Local institution name', 'text', 'Name of the institution in its original language, if different from the international name.', 'institution_local_name: "Université Exemple"'),
-        field('candidate.education.bachelors.start_date', 'Bachelor’s start date', 'date', 'Date your bachelor’s program started. Use YYYY-MM-DD; do not invent days if you only know the year.', 'start_date: "2021-09-01"'),
-        field('candidate.education.bachelors.end_date', 'Bachelor’s end date', 'date', 'Actual or expected completion date. If the program is unfinished, clarify its status in your background.', 'end_date: "2024-07-15"'),
-        field('candidate.education.masters.institution', 'Master’s institution', 'text', 'Official name of the university awarding or expected to award the master’s degree.', 'institution: "Example Polytechnic"'),
-        field('candidate.education.masters.institution_local_name', 'Local institution name', 'text', 'Institution name in its original language if relevant.', 'institution_local_name: "Politecnico di Esempio"'),
-        field('candidate.education.masters.start_date', 'Master’s start date', 'date', 'The actual start date of your master’s program, in YYYY-MM-DD format.', 'start_date: "2024-09-01"'),
-        field('candidate.education.masters.end_date', 'Master’s end date', 'date', 'Actual or expected master’s completion date. Clarify expected completion in your background.', 'end_date: "2026-10-01"')
+        field('candidate.education.bachelors.institution', 'Bachelor’s institution', 'text', 'The official name of your university or college.', { placeholder: 'University of Example' }),
+        field('candidate.education.bachelors.institution_local_name', 'Local institution name', 'text', 'The institution’s name in its original language, if different.', { placeholder: 'Université Exemple' }),
+        field('candidate.education.bachelors.start_date', 'Bachelor’s start date', 'date', 'Use the calendar or the date order shown in this field. Leave blank if unknown.'),
+        field('candidate.education.bachelors.end_date', 'Bachelor’s end date', 'date', 'Actual or expected completion. Use the date order shown in this field.', {
+          help: 'If the degree is still in progress, say so in your factual background. If you only know the month or year, leave the date blank and describe what you know there instead of inventing a day.'
+        }),
+        field('candidate.education.masters.institution', 'Master’s institution', 'text', 'The official name of your university or college.', { placeholder: 'Example Polytechnic' }),
+        field('candidate.education.masters.institution_local_name', 'Local institution name', 'text', 'The institution’s name in its original language, if different.', { placeholder: 'Politecnico di Esempio' }),
+        field('candidate.education.masters.start_date', 'Master’s start date', 'date', 'Use the calendar or the date order shown in this field. Leave blank if unknown.'),
+        field('candidate.education.masters.end_date', 'Master’s end date', 'date', 'Actual or expected completion. Use the date order shown in this field.', {
+          help: 'If the degree is still in progress, say so in your factual background. If you only know the month or year, leave the date blank and describe what you know there instead of inventing a day.'
+        })
       ]
     },
     {
       id: 'behavior', title: 'Agent behavior', eyebrow: 'POLICIES',
-      description: 'Control which answers the agent may infer and when it must ask for approval.',
+      description: 'Set your preferences and decide which answers need your approval.',
       fields: [
-        field('instructions', 'General agent instructions', 'textarea', 'Your overall rules: preferred roles, preferred locations, availability, what the agent may infer, and conditions that require clarification. The agent reads this text as instructions.', 'instructions: |-\n  Prefer backend engineering roles in Canada.\n  Do not invent qualifications. Ask when unsure.', { wide: true, tall: true }),
-        field('answers.mode', 'Answer mode', 'select', 'Trusted allows answers supported by your facts and permitted research. Review asks for approval of inferred answers. Neither mode permits inventing information.', 'mode: trusted\n# or: mode: review', { choices: [['trusted', 'Trusted — infer supported answers'], ['review', 'Review — approve inferred answers']] }),
-        field('answers.protected_category', 'Protected-category policy', 'select', 'How to handle the special employment protected-category question. negative_or_skip gives No only if membership is explicitly false, skips if true, and asks when unknown; ask always requests input; skip avoids answering.', 'protected_category: negative_or_skip', { choices: [['negative_or_skip', 'No / skip based on explicit fact'], ['ask', 'Always ask'], ['skip', 'Always skip']] }),
-        field('answers.cookies', 'Cookie handling', 'select', 'Accept only the cookies needed to reach an application, or ask for a decision. This is separate from consent to employer declarations.', 'cookies: accept_when_needed\n# or: cookies: ask', { choices: [['accept_when_needed', 'Accept when needed'], ['ask', 'Ask first']] }),
-        field('answers.topics.work_authorization', 'Work authorization', 'select', 'Infer only when the work country and supplied citizenship/status support a sound answer. Ask instead if you prefer to decide every visa or sponsorship question.', 'work_authorization: infer\n# or: work_authorization: ask', { choices: [['infer', 'Infer with evidence'], ['ask', 'Ask me']] }),
-        field('answers.topics.salary', 'Salary questions', 'select', 'Infer uses your salary strategy and available market evidence. Ask requires your response instead of an estimated expectation.', 'salary: infer\n# or: salary: ask', { choices: [['infer', 'Infer with evidence'], ['ask', 'Ask me']] }),
-        field('answers.topics.personal_disclosure', 'Personal disclosures', 'select', 'Sensitive questions about identity, disability, criminal history, or similar topics. Ask is safer than letting the agent infer personal information.', 'personal_disclosure: ask', { choices: [['ask', 'Ask me'], ['infer', 'Infer only when explicitly authorised']] }),
-        field('answers.topics.consent', 'Consent and declarations', 'select', 'Questions requesting a legal declaration, agreement or consent. Keep Ask unless your instructions explicitly describe which declarations you authorise.', 'consent: ask', { choices: [['ask', 'Ask me'], ['infer', 'Use explicitly authorised consent']] })
+        field('instructions', 'General agent instructions', 'textarea', 'Describe preferred roles, locations, work arrangements and situations where the bot should ask you. Standard instructions are already filled in; edit them as needed.', {
+          placeholder: 'Prefer backend engineering roles in Canada. I can work in an office. Ask when a question cannot be answered from my facts.', wide: true, tall: true,
+          help: 'These rules apply across applications. Put compensation preferences in Salary preferences and letter-writing style in Documents & cover letters so each set of instructions is easy to maintain.'
+        }),
+        field('answers.mode', 'Answer mode', 'select', 'Choose whether supported answers can be used immediately or need your review.', {
+          choices: [['trusted', 'Trusted — use supported answers'], ['review', 'Review — approve suggested answers']],
+          help: 'Topic-specific rules below still apply. For example, Ask me for consent continues to require a decision even in Trusted mode. Neither mode authorizes invented personal facts.'
+        }),
+        field('answers.protected_category', 'Protected-category policy', 'select', 'Choose how the bot handles questions about protected employment categories.', {
+          choices: [['negative_or_skip', 'Use membership: No, skip or ask'], ['ask', 'Always ask me'], ['skip', 'Always skip']],
+          help: 'With Use membership, an explicit No in your profile allows a No answer; Yes causes the question to be skipped; Unknown causes the bot to ask. This rule applies only to the employment category, not every sensitive disclosure.'
+        }),
+        field('answers.cookies', 'Cookie handling', 'select', 'Allow cookies needed to reach an application, or ask before accepting.', {
+          choices: [['accept_when_needed', 'Accept when needed'], ['ask', 'Ask first']],
+          help: 'The bot should prefer rejecting optional cookies. Employer privacy declarations and consent to contact you are handled separately by the consent policy.'
+        }),
+        field('answers.topics.work_authorization', 'Work authorization', 'select', 'Choose whether to research work rights from your facts, ask you, or skip.', {
+          choices: topicChoices,
+          help: 'Research needs the actual work country and your supplied citizenships or permits. The bot checks official guidance and asks if the location, your status or the question is unclear.'
+        }),
+        field('answers.topics.salary', 'Salary questions', 'select', 'Choose whether to estimate expected pay, ask you, or skip.', {
+          choices: topicChoices,
+          help: 'Estimated answers use Salary preferences and current comparable evidence. Expected pay is different from past salary; the bot must never invent salary history.'
+        }),
+        field('answers.topics.personal_disclosure', 'Personal disclosures', 'select', 'Set the policy for sensitive personal questions.', {
+          choices: [['ask', 'Ask me'], ['infer', 'Use explicitly supplied facts'], ['skip', 'Skip this topic']],
+          help: 'This includes identity, disability, ethnicity, veteran status and criminal history. Choosing supplied facts only permits answers supported by information you have actually provided.'
+        }),
+        field('answers.topics.consent', 'Consent and declarations', 'select', 'Choose how to handle agreements, declarations and permission requests.', {
+          choices: [['ask', 'Ask me'], ['infer', 'Use my explicit prior authorization'], ['skip', 'Skip this topic']],
+          help: 'If you authorize answers in advance, describe precisely which declarations you accept in General agent instructions. Approving one checkbox does not authorize other checkboxes or final submission.'
+        })
       ]
     },
     {
       id: 'salary', title: 'Salary preferences', eyebrow: 'COMPENSATION',
-      description: 'Define how estimated salary expectations should be selected.',
+      description: 'Guide the expected salary the bot proposes when an application asks for a number.',
       fields: [
-        field('salary.strategy', 'Salary strategy', 'select', 'Market selects a supported central market estimate. Low selects the lower defensible part of a comparable compensation range, not an arbitrary discount.', 'strategy: market\n# or: strategy: low', { choices: [['market', 'Market — central supported estimate'], ['low', 'Low — lower supported estimate']] }),
-        field('salary.minimum', 'Minimum acceptable salary', 'nullable', 'Optional floor. Include currency, gross/net, time basis and base/total, so the agent does not compare incompatible numbers.', 'minimum: "EUR 50000 gross annual base"\n# or: minimum: null', { wide: true }),
-        field('salary.instructions', 'Salary research instructions', 'textarea', 'Additional constraints for compensation research, such as preferred sources, location, role seniority, and what to do when evidence is weak.', 'instructions: |-\n  Prefer posted salary bands.\n  Ask if the evidence is contradictory.', { wide: true, tall: true })
+        field('salary.strategy', 'Salary strategy', 'select', 'Market aims around the middle of a researched pay range. Low aims toward its lower end, while respecting your minimum.', {
+          wide: true,
+          choices: [['market', 'Market — typical pay for a comparable role'], ['low', 'Low — lower end of comparable pay']],
+          help: 'The bot first looks for the employer’s advertised salary band. Otherwise it researches recent pay for similar roles, seniority, work location and contract type. It compares matching currencies, pay periods and gross/net or base/total amounts. This is a researched judgment, not a fixed formula or guaranteed offer. If reliable comparisons are missing or contradictory, it asks you.',
+          checklist: [
+            'Illustration only: for a relevant EUR 40,000–60,000 gross annual base range, Market could aim near EUR 50,000; Low could aim nearer EUR 40,000–45,000. The actual choice depends on the evidence and your experience.',
+            'Your minimum is a floor for either strategy. The bot should ask if the available range conflicts with that floor.',
+            'This setting is used only when salary questions allow an estimated answer. If you choose Ask me for salary questions, you provide the amount instead.'
+          ]
+        }),
+        field('salary.minimum', 'Minimum acceptable salary', 'nullable', 'Optional. Include currency, amount, before/after tax, pay period and base/total pay.', {
+          placeholder: 'EUR 50000 gross annual base', wide: true,
+          help: 'Gross means before tax; net means take-home pay. Annual, monthly and hourly amounts cannot be compared directly. Base pay excludes bonuses and equity, while total compensation may include them. Leave blank to avoid setting a fixed floor.'
+        }),
+        field('salary.instructions', 'Salary research instructions', 'textarea', 'Add source preferences or special requirements. Standard research instructions are already filled in.', {
+          placeholder: 'Prefer the employer’s published pay range. Ask if the currency or working hours are unclear.', wide: true, tall: true,
+          help: 'Useful details include the contract type you want, whether bonuses should count, and circumstances that should always require your input. Keep the numeric floor in Minimum acceptable salary.'
+        })
       ]
     },
     {
       id: 'documents', title: 'Documents & cover letters', eyebrow: 'APPLICATION MATERIALS',
-      description: 'Upload your finished CV, then supply facts, optional sample letters and writing preferences. The bot does not extract cover-letter background from your PDF.',
+      description: 'Choose your CV and give the writer facts and style preferences for optional cover letters.',
       fields: [
-        field('documents.cv', 'CV filename', 'text', 'Upload your finished PDF below to set this filename, or enter a path relative to private/ if the file is already there. Save to private/ writes the selected PDF unchanged alongside instructions.yaml where supported. Otherwise download both files and move them to private/. Maximum PDF size: 10 MB.', 'cv: "alex-example-cv.pdf"\n# Save the PDF at private/alex-example-cv.pdf'),
-        field('documents.cover_letter', 'Cover-letter behavior', 'select', 'Trusted writes a letter when needed; Review asks for approval; Skip disables generated cover letters. This is independent of final application submission.', 'cover_letter: review', { choices: [['trusted', 'Trusted — generate when needed'], ['review', 'Review before use'], ['skip', 'Skip cover letters']] }),
-        field('documents.retention', 'Generated-letter retention', 'select', 'Keep saves generated Markdown/PDF cover letters. delete_after_run removes only generated cover letters when a run ends; never deletes your CV or example letters.', 'retention: keep', { choices: [['keep', 'Keep generated letters'], ['delete_after_run', 'Delete generated letters after run']] }),
-        field('documents.background', 'Factual background', 'textarea', 'This is the evidence the writer may use, not a request about tone. Supply your own education, skills, work/research/projects, concrete contributions and outcomes, career interests and personal motivation. Include dates, tools and numbers only when accurate. The CV is not read automatically; paste the relevant facts here even if they also appear in the PDF.', `background: |-
-  EDUCATION & BACKGROUND
-  MSc in Computer Science, Example University, completed in 2026.
-  BSc in Software Engineering. A semester abroad involved teamwork
-  with students from several academic backgrounds.
+        field('documents.cv', 'CV filename', 'text', 'Upload a finished PDF (up to 10 MB), or enter its filename if it is already in private/.', {
+          placeholder: 'alex-example-cv.pdf',
+          help: 'The PDF is uploaded to employers unchanged. Selecting it here updates the filename; Save to private/ copies the selected PDF together with your configuration. If direct folder saving is unavailable, download the files and move them to private/ yourself. A file in a subfolder can be entered as documents/cv.pdf.'
+        }),
+        field('documents.cover_letter', 'Cover-letter behavior', 'select', 'Choose whether to generate letters immediately, review them first, or skip them.', {
+          choices: [['trusted', 'Generate when needed'], ['review', 'Review before use'], ['skip', 'Skip cover letters']],
+          help: 'Letters can be entered into a textbox or generated as a document, depending on the application. This decision is separate from permission to submit the final application.'
+        }),
+        field('documents.retention', 'Generated-letter retention', 'select', 'Choose whether generated letters stay on disk after a run.', {
+          choices: [['keep', 'Keep generated letters'], ['delete_after_run', 'Delete generated letters after run']],
+          help: 'Cleanup affects only the bot’s generated letter files. Your CV and the example letters you supplied are preserved.'
+        }),
+        field('documents.background', 'Factual background', 'textarea', 'Provide your education, skills, experience, projects, contributions, results and career interests. Copy relevant facts from your CV here; the writer does not extract them from the PDF.', {
+          placeholder: `Example — replace with your own facts:
 
-  TECHNICAL SKILLS
-  Python, PyTorch, pandas, SQL, Git and pytest.
-  Machine learning, data analysis and model evaluation.
+Education: MSc in Computer Science, Example University, 2026.
+Skills: Python, PyTorch, SQL, Git and automated testing.
 
-  EXPERIENCE, RESEARCH & PROJECTS
-  Master's thesis: classified microscopy images using a small dataset.
-  Built the preprocessing and training pipeline in Python/PyTorch.
-  Compared a CNN with a pretrained transformer; kept samples from
-  the same subject in one split to avoid data leakage.
-  Team project: developed a dashboard for financial time-series analysis.
-  My contribution was data validation and automated tests.
+Thesis: built an image-classification pipeline and compared models.
+My contribution: preprocessing and evaluation with subject-separated data splits.
+Team project: implemented data validation and tests for a financial dashboard.
 
-  CAREER INTERESTS & MOTIVATION
-  Interested in junior ML engineering and applied research roles.
-  Enjoy connecting rigorous evaluation with useful applications.
-  Value international teams and learning from domain specialists.`, {
+Interests: junior ML engineering and applied research.
+Motivation: I enjoy rigorous evaluation and learning from domain experts.`,
           wide: true, tall: true,
-          guidance: 'Tell the writer what is true about you: education, tools, experience, your contributions, results, career interests and motivation. Copy relevant facts from your CV here; uploading the PDF does not fill this field.',
+          help: 'Focus on evidence the writer can cite. Specific contributions help it connect your experience to a job. Only include dates, grades, tools and numerical outcomes you can verify.',
           checklist: [
-            'Education: degree, subject, institution, completion or expected date; grades only if you want them mentioned.',
-            'Skills: tools and methods you actually used, and the context in which you used them.',
-            'Experience and projects: problem, your role, work you did, outcome and any verified numbers.',
-            'Career interests and motivation: roles or domains you want, why they interest you, and what you value in a team.',
-            'Use only your own facts. The fictional example below is a guide to content and structure.'
+            'Education: degree, subject, institution and completion or expected date.',
+            'Experience and projects: the problem, your own role, what you did and the result.',
+            'Skills: the tools or methods you used and where you used them.',
+            'Motivation: roles or domains you want and what interests you about them.'
           ]
         }),
-        field('documents.examples', 'Example cover letters', 'examples', 'Optional past letters that show your preferred tone and structure. Paste a whole letter with line breaks in each row, or reference an existing UTF-8 .md/.txt file in private/. Each example must be nonblank and at most 20 KB. A one-line value is treated as a filename. These samples guide style; the writer must take factual claims from your background instead.', `examples:
-  - |-
-    Dear Example Analytics Team,
-
-    I am interested in your junior ML engineer role. My recent
-    thesis involved image classification with Python and PyTorch.
-
-    I enjoyed building a reproducible evaluation pipeline and
-    investigating why models failed on unfamiliar samples.
-    I would like to bring that curiosity to an applied research team.
-
-    Thank you for considering my application.
-    Best regards,
-    Alex Example
-# Or reference a file you saved in private/:
-# examples: ["previous-letter.md"]
-# Without examples: examples: []`, {
+        field('documents.examples', 'Example cover letters', 'examples', 'Optional. Add one past letter per entry to show the voice and structure you like.', {
+          placeholder: 'Dear Hiring Team,\n\nI am interested in your junior ML role. I enjoyed building and evaluating models during my thesis.\n\nThank you for considering my application.\nAlex Example',
           wide: true,
-          guidance: 'Optional: paste a past letter per row to demonstrate your preferred voice. Use multiple lines for pasted letters. You can also enter a .md/.txt filename stored in private/. Leave the list empty if you have none.'
+          help: 'Paste the complete letter with its paragraph breaks, or enter the name of a UTF-8 .md or .txt file stored in private/. A one-line entry is treated as a filename. Each entry must be nonblank and at most 20 KB. These examples guide style; factual claims must come from your background.'
         }),
-        field('documents.instructions', 'Cover-letter writing instructions', 'textarea', 'Describe how to write: tone, length, language, structure and which parts of your supplied background to emphasise for different opportunities. Facts belong in Factual background. Company-specific claims should be verified, and insufficient evidence should lead to a question.', `instructions: |-
-  Write a concise, specific letter in the job's language.
-  Aim for 250–350 words unless the form gives a different limit.
-  Use only my candidate facts and factual background as evidence.
-  Use my example letters for tone and structure, not new claims.
-  For research roles, emphasise evaluation and thesis contributions.
-  For software roles, emphasise implementation, testing and teamwork.
-  Sound natural, honest and enthusiastic; avoid generic praise.
-  Verify claims about the employer. Ask if my background is insufficient.`, {
+        field('documents.instructions', 'Cover-letter writing instructions', 'textarea', 'Set the language, tone, length and emphasis. Standard writing instructions are already filled in; edit them to suit you.', {
+          placeholder: 'Write 250–350 words in the job’s language. Use a natural, specific tone. Emphasise research for research roles and implementation for engineering roles.',
           wide: true, tall: true,
-          guidance: 'Tell the writer how to present your facts: preferred language, word count, tone and emphasis. For example, prioritise thesis research for research jobs and implementation/testing for engineering jobs.'
+          help: 'You can tell the writer how to adapt to different opportunities, for example by prioritising thesis methods for research roles and testing or teamwork for software roles. Your qualifications and achievements belong in Factual background.'
         })
       ]
     },
     {
       id: 'navigation', title: 'Navigation & submission', eyebrow: 'AUTOMATION',
-      description: 'Control permitted navigation and whether applications can be submitted automatically.',
+      description: 'Choose which recruiting sites the bot may follow and who submits completed applications.',
       fields: [
-        field('navigation.handoffs', 'Recruiting-site handoffs', 'select', 'Trusted follows relevant public HTTPS recruiting-platform links. Ask requires approval before navigating to new hosts.', 'handoffs: trusted\n# or: handoffs: ask', { choices: [['trusted', 'Trusted — follow relevant links'], ['ask', 'Ask before new hosts']] }),
-        field('navigation.allowed_hosts', 'Pre-approved hosts', 'tags', 'Hostnames the agent may navigate to without asking when host approval is required. Use hostnames only, not full URLs or paths.', 'allowed_hosts: [jobs.example.org, apply.example.com]', { wide: true, placeholder: 'jobs.example.org, apply.example.com' }),
-        field('submission', 'Final submission mode', 'select', 'Manual stops for you to review and submit. Auto authorises the bot to submit completed applications; use only when you are prepared for an irreversible submission.', 'submission: manual\n# or: submission: auto', { choices: [['manual', 'Manual — I review and submit'], ['auto', 'Automatic — bot may submit']], wide: true })
+        field('navigation.handoffs', 'Recruiting-site handoffs', 'select', 'Allow relevant recruiting links, or ask before opening a new website.', {
+          choices: [['trusted', 'Follow relevant recruiting links'], ['ask', 'Ask before visiting a new website']],
+          help: 'An employer’s Apply button may lead to a separate recruiting platform. Trusted navigation permits relevant public HTTPS handoffs; logins and unsupported challenges can still require your help.'
+        }),
+        field('navigation.allowed_hosts', 'Pre-approved hosts', 'tags', 'Optional. Enter website hostnames separated by commas, without https:// or page paths.', {
+          placeholder: 'jobs.example.org, apply.example.com', wide: true,
+          help: 'This list preapproves sites when you otherwise ask about new websites. For a link such as https://jobs.example.org/apply/123, enter only jobs.example.org.'
+        }),
+        field('submission', 'Final submission mode', 'select', 'Choose who sends the completed application to the employer.', {
+          choices: [['manual', 'Manual — I review and submit'], ['auto', 'Automatic — bot may submit']], wide: true,
+          help: 'With Manual, submit in the bot’s visible browser before closing the run. Automatic permits the bot to send completed applications, even when answer and letter generation are also trusted.'
+        })
       ]
     },
     {
       id: 'advanced', title: 'Advanced settings', eyebrow: 'RUNTIME',
-      description: 'Model, budget and browser limits. The repository defaults are reasonable starting values.',
+      description: 'Limits on model use, estimated cost and browser activity. Start with the supplied defaults.',
       fields: [
-        field('model.id', 'Model ID', 'text', 'The bot requires this exact model snapshot. This value is fixed by the project and cannot be changed in the form.', 'id: claude-haiku-5-5'),
-        field('model.effort', 'Model effort', 'select', 'Controls reasoning effort. Higher effort may increase latency or token usage; the model must support the selected effort.', 'effort: medium', { choices: [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']] }),
-        field('model.max_output_tokens', 'Maximum output tokens', 'number', 'Per-request limit covering the model output and thinking tokens. A higher value permits longer replies but can cost more.', 'max_output_tokens: 8192'),
-        field('model.max_request_chars', 'Maximum request characters', 'number', 'Local cap on characters supplied in one model request, not the model context-window size.', 'max_request_chars: 240000'),
-        field('model.max_calls_per_application', 'Calls per application', 'number', 'Maximum model calls spent on one job application. A limit prevents unlimited retry loops.', 'max_calls_per_application: 40'),
-        field('model.max_calls_per_run', 'Calls per run', 'number', 'Maximum model calls for the complete batch of applications.', 'max_calls_per_run: 100'),
-        field('model.estimated_budget_usd', 'Estimated budget (USD)', 'decimal', 'Local estimated API budget for a run, not a guarantee of provider billing. Set actual provider-side limits separately.', 'estimated_budget_usd: 0.50'),
-        field('model.web_searches_per_application', 'Web searches per application', 'number', 'Maximum external searches for compensation, work rules and company facts. Zero disables searches and can cause the agent to ask more questions.', 'web_searches_per_application: 6'),
-        field('browser.delay_ms', 'Browser action delay (ms)', 'number', 'Delay between browser actions, in milliseconds. Example: 400 means 0.4 seconds.', 'delay_ms: 400'),
-        field('browser.max_actions', 'Maximum browser actions', 'number', 'Per-application cap on browser interactions. Stops runaway navigation and repeated clicks.', 'max_actions: 100'),
-        field('browser.snapshot_chars', 'Browser snapshot characters', 'number', 'Upper bound on characters retained from a browser snapshot to limit prompt size. This field may be missing from older private copies.', 'snapshot_chars: 18000')
+        field('model.id', 'Model ID', 'text', 'The model version required by this project. This value is fixed.', { placeholder: 'claude-haiku-5-5' }),
+        field('model.effort', 'Model effort', 'select', 'Choose how much reasoning effort the model uses.', {
+          choices: [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']],
+          help: 'Higher effort can make complex decisions take longer and use more tokens. It does not increase your configured call or budget limits.'
+        }),
+        field('model.max_output_tokens', 'Maximum output tokens', 'number', 'Limit the size of one model response, including reasoning. Allowed: 1,024–12,000.', { placeholder: '8192' }),
+        field('model.max_request_chars', 'Maximum request characters', 'number', 'Limit the text sent in one model request. Allowed: 10,000–350,000 characters.', { placeholder: '240000' }),
+        field('model.max_calls_per_application', 'Calls per application', 'number', 'Stop working on a job after this many model calls. Allowed: 1–100.', { placeholder: '40' }),
+        field('model.max_calls_per_run', 'Calls per run', 'number', 'Limit model calls across the entire batch of jobs. Allowed: 1–200.', { placeholder: '100' }),
+        field('model.estimated_budget_usd', 'Estimated budget (USD)', 'decimal', 'Estimated spend allowed for one run. Enter a number greater than 0, up to 5.', {
+          placeholder: '0.50',
+          help: 'This is a local estimate based on recorded usage, not a provider billing cap. Set a spending limit in your provider account as well. Use a decimal point when entering a fractional dollar amount.'
+        }),
+        field('model.web_searches_per_application', 'Web searches per application', 'number', 'Allow 0–20 research searches per job. Enter 0 to disable searches.', {
+          placeholder: '6',
+          help: 'Research supports salary estimates, work-rights checks and company facts. When searches are unavailable, the bot should ask about answers that need external evidence.'
+        }),
+        field('browser.delay_ms', 'Browser action delay (ms)', 'number', 'Pause between browser actions. 400 ms means 0.4 seconds. Allowed: 100–5,000.', { placeholder: '400' }),
+        field('browser.max_actions', 'Maximum browser actions', 'number', 'Stop after this many browser interactions per application. Allowed: 1–300.', { placeholder: '100' }),
+        field('browser.snapshot_chars', 'Browser snapshot characters', 'number', 'Limit text kept from one page snapshot. Allowed: 2,000–40,000 characters.', { placeholder: '18000' })
       ]
     },
     {
-      id: 'raw', title: 'Raw YAML', eyebrow: 'EXPERT EDITOR',
-      description: 'Edit the complete file, including custom fields and comments. Syntax changes should be checked with the bot validator.',
+      id: 'raw', title: 'Advanced file editor', eyebrow: 'FILE CONTENTS',
+      description: 'For experienced users: edit the underlying configuration file directly.',
       fields: []
     }
   ];
-
-  for (const section of window.CONFIG_SCHEMA) {
-    for (const definition of section.fields) {
-      if (definition.path.startsWith('answers.topics.')) {
-        definition.choices.push(['skip', 'Skip this topic']);
-      }
-    }
-  }
 
   // A neutral v2 template. Blank personal facts are intentional.
   window.CONFIG_TEMPLATE = `# Setup copies this to private/instructions.yaml; only edit your private copy.

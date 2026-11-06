@@ -6,10 +6,10 @@ A local, offline editor for Application Filler's `private/instructions.yaml` (ve
 
 Open **`index.html`** in a modern browser. Double-clicking the file works on Windows, macOS, and Linux. You do **not** need Python, Node.js, Docker, a web server, or internet access to edit a configuration.
 
-1. Click **Open YAML** and choose your existing `private/instructions.yaml`, or use **New** for a blank configuration.
-2. Edit settings using the forms. Every field shows guidance and example YAML; **?** opens additional help. Examples are fictional; replace them with your own facts rather than treating them as defaults.
+1. Click **Open configuration** and choose your existing `private/instructions.yaml`, or use **New** for a blank configuration.
+2. Enter plain text in the forms, without surrounding quotation marks. Short captions explain what to provide; empty text fields show example entries. Date fields follow the date order displayed by your browser. **?** appears where there is extra information to explain. Examples are suggestions and are never saved as your personal facts.
 3. In **Documents & cover letters**, choose **Upload CV PDF** to select your existing CV (up to 10 MB). This sets `documents.cv` to the selected filename. No file is sent over the network or rewritten.
-4. Where available, choose **Save to private/** and select the repository's `private/` folder to write `instructions.yaml` and the selected PDF together. Otherwise choose **Save file** or **Download** for YAML, and **Download selected PDF** for the CV. Move both to `private/`. **Selecting a PDF does not itself copy it into the repository.** If your CV is already in `private/`, you can just enter its relative path.
+4. The main **Save to private/** button lets you select the repository's `private/` folder and write `instructions.yaml` and the selected PDF together. In browsers without folder access it becomes **Download for private/**: download the configuration and use **Download selected PDF** for the CV, then move both to `private/`. **Save file** is a secondary option for saving just the configuration. **Selecting a PDF does not itself copy it into the repository.** If your CV is already in `private/`, you can just enter its relative path.
 5. Validate before running the bot:
 
 ```sh
@@ -22,7 +22,7 @@ The command above runs in the **application-filler-bot** directory, not the edit
 
 - **Factual background:** your degrees and dates, tools and methods you used, work or research, projects, your personal contributions and verified results, career interests and motivation. Copy relevant facts from your CV here; the bot does not extract them from the PDF. The field's example shows a possible structure, and **?** opens a checklist.
 - **Example cover letters:** optional past letters that show your preferred voice. Paste a whole letter with line breaks per row, or enter a UTF-8 `.md`/`.txt` filename stored in `private/`. One-line entries are interpreted as filenames. Each example must be nonblank and at most 20 KB. Remove unused rows. Leave the list empty if you have none. These letters guide style, not factual claims.
-- **Writing instructions:** preferred tone, word count, language, structure and which factual strengths to emphasise for different roles. For example, emphasise evaluation for research roles and implementation/testing for engineering roles.
+- **Writing instructions:** preferred tone, word count, language, structure and which factual strengths to emphasise for different roles. Standard instructions are already filled in and can be edited. For example, emphasise evaluation for research roles and implementation/testing for engineering roles.
 
 Choose **Review before use** if you want to approve generated letters, or **Skip cover letters** if you do not want them. Background and examples stay blank in new configurations.
 
@@ -37,9 +37,9 @@ Choose **Review before use** if you want to approve generated letters, or **Skip
 - No network calls, CDN, cookies, local storage or analytics. All processing happens in the browser.
 - Personal information is **not embedded** into the editor. The default template has blank personal fields.
 - A bundled YAML parser handles quoted values, lists and multiline text offline. Document edits preserve comments and other candidate facts, though formatting may change. Edited multiline values use literal blocks.
-- The **Raw YAML** tab lets advanced users edit the complete file. Checks use a generated copy of the bot's strict settings schema, including allowed keys, choices, numeric bounds and file-size limits. Custom factual keys belong under `candidate`; unknown settings elsewhere are rejected by the bot.
+- **Advanced file editor** lets experienced users edit the complete configuration file. Checks use a generated copy of the bot's strict settings schema, including allowed keys, choices, numeric bounds and file-size limits. Custom factual keys belong under `candidate`; unknown settings elsewhere are rejected by the bot. Guided fields handle file formatting automatically.
 - The editor cannot check that a referenced file already exists in `private/`. Always run `demo validate` for authoritative bot-side validation, including referenced example-letter files.
-- Light and dark themes follow your system preference, including fields, examples and notices.
+- The editor always uses a light theme, including native fields and the file editor, even when your system prefers dark mode.
 - Do not add secrets (such as your Anthropic API key) to `instructions.yaml`. Follow the repository's `.secrets/anthropic_api_key` setup.
 
 ## Source files

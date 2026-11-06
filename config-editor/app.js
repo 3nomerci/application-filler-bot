@@ -83,10 +83,10 @@
     const field = fieldByPath.get(path);
     if (!field) throw new Error(`Unknown field: ${path}`);
     const doc = parseYaml().clone();
-    if (doc.errors.length) throw new Error('Fix the YAML syntax in Raw YAML first.');
+    if (doc.errors.length) throw new Error('Correct the file structure in Advanced file editor first.');
     if (field.type === 'number' || field.type === 'decimal') {
       value = value === '' ? null : Number(value);
-    } else if (field.nullableBoolean || field.type === 'flex') {
+    } else if (field.nullableBoolean) {
       if (value === 'true') value = true;
       else if (value === 'false') value = false;
       else if (value === 'null') value = null;
@@ -99,7 +99,7 @@
       const parent = doc.getIn(parentPath, true);
       if (parent === undefined) doc.setIn(parentPath, doc.createNode({}));
       else if (!YAML.isMap(parent)) {
-        throw new Error(`${parentPath.join('.')}: expected a mapping. Correct it in Raw YAML first.`);
+        throw new Error(`${parentPath.join('.')}: expected a settings group. Correct it in Advanced file editor first.`);
       }
     }
     const previous = doc.getIn(segments, true);
@@ -126,7 +126,7 @@
   // Validate against JSON Schema generated from the bot's strict Pydantic models.
   function contractErrors(value, definition, path = '', doc = null) {
     definition = resolveDefinition(definition);
-    const label = path || 'Configuration';
+    const label = fieldByPath.get(path)?.label || path || 'Configuration';
     if (definition.anyOf) {
       return definition.anyOf.some((option) => !contractErrors(value, option, path, doc).length)
         ? [] : [`${label}: expected ${definition.anyOf.map((option) => option.type).join(' or ')}.`];
@@ -189,31 +189,31 @@
     const doc = parseYaml(source);
     for (const problem of [...doc.errors, ...doc.warnings]) {
       const line = source.slice(0, problem.pos?.[0] || 0).split('\n').length;
-      errors.push(`Line ${line}: invalid or unsupported YAML (${problem.code}). Check syntax, tags and duplicate keys.`);
+      errors.push(`Line ${line}: invalid configuration structure (${problem.code}). Check indentation, values and duplicate settings.`);
     }
     if (errors.length) return { errors, warnings };
     YAML.visit(doc, {
       Pair(_key, pair) {
         if (!YAML.isScalar(pair.key) || typeof pair.key.value !== 'string') {
-          errors.push('YAML mapping keys must be unique strings, as required by the bot.');
+          errors.push('Setting names must be unique text values, as required by the bot.');
         } else if (pair.key.value === '<<' && pair.key.type === 'PLAIN') {
-          errors.push('YAML merge keys are not supported by the bot. Use explicit mapping values.');
+          errors.push('Merged settings are not supported by the bot. Write each setting explicitly.');
         }
       }
     });
     let data;
     try { data = doc.toJS({ maxAliasCount: 100 }); }
-    catch { errors.push('Invalid YAML aliases or excessive alias expansion.'); return { errors, warnings }; }
+    catch { errors.push('Invalid or excessive references between settings.'); return { errors, warnings }; }
     errors.push(...contractErrors(data, window.CONFIG_CONTRACT, '', doc));
     if (errors.length) return { errors, warnings };
     for (const field of fieldDefinitions) {
       const value = valueAt(field.path, source);
       if (field.type === 'email' && value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value))) {
-        warnings.push(`${field.path}: this does not look like a complete email address.`);
+        warnings.push(`${field.label}: this does not look like a complete email address.`);
       }
       if (field.type === 'url' && value) {
         try { if (!['https:', 'http:'].includes(new URL(String(value)).protocol)) throw new Error(); }
-        catch { warnings.push(`${field.path}: enter an http:// or https:// URL.`); }
+        catch { warnings.push(`${field.label}: enter an http:// or https:// URL.`); }
       }
     }
     for (const [index, example] of (data.documents?.examples || []).entries()) {
@@ -312,12 +312,14 @@
     const value = field.type === 'tags' || field.type === 'examples' ? listAt(field.path) : valueAt(field.path);
     const id = `field-${field.path.replaceAll('.', '-')}`;
 
+    if (field.type === 'relocation') return makeRelocationControl(field, value, id);
+
     if (field.type === 'examples') {
       const control = makeExamplesControl(field, value || []);
       control.id = id;
       control.setAttribute('role', 'group');
       control.setAttribute('aria-label', field.label);
-      control.setAttribute('aria-describedby', `${id}-description ${id}-example`);
+      control.setAttribute('aria-describedby', `${id}-description`);
       return control;
     }
 
@@ -347,6 +349,7 @@
     } else if (field.type === 'textarea') {
       control = el('textarea', `field-textarea${field.tall ? ' tall' : ''}`);
       control.value = value ?? '';
+      control.placeholder = field.placeholder || '';
       control.spellcheck = true;
       control.addEventListener('input', () => updateField(field.path, control.value));
     } else {
@@ -371,9 +374,40 @@
       });
     }
     control.id = id;
-    control.setAttribute('aria-describedby', `${id}-description ${id}-example`);
+    control.setAttribute('aria-describedby', `${id}-description`);
     if (field.path === 'model.id') control.readOnly = true;
     return field.path === 'documents.cv' ? makeCVControl(control) : control;
+  }
+
+  function makeRelocationControl(field, value, id) {
+    const wrapper = el('div', 'relocation-control');
+    const select = el('select', 'field-select');
+    select.id = id;
+    select.setAttribute('aria-describedby', `${id}-description`);
+    for (const [option, label] of [['yes', 'Yes, willing to relocate'], ['no', 'No, not willing to relocate'], ['unknown', 'Unknown / leave unspecified'], ['specific', 'Describe my preference']]) {
+      const node = el('option', '', label);
+      node.value = option;
+      select.append(node);
+    }
+    select.value = value === true ? 'yes' : value === false ? 'no' : value ? 'specific' : 'unknown';
+    const detail = el('div', 'relocation-detail');
+    detail.hidden = select.value !== 'specific';
+    const label = el('label', 'field-caption', 'Where would you relocate?');
+    label.htmlFor = `${id}-detail`;
+    const input = el('input', 'field-input');
+    input.id = label.htmlFor;
+    input.placeholder = field.placeholder;
+    input.value = typeof value === 'string' ? value : '';
+    input.addEventListener('input', () => updateField(field.path, input.value));
+    select.addEventListener('change', () => {
+      detail.hidden = select.value !== 'specific';
+      const next = { yes: true, no: false, unknown: null, specific: input.value }[select.value];
+      updateField(field.path, next);
+      if (!detail.hidden) input.focus();
+    });
+    detail.append(label, input);
+    wrapper.append(select, detail);
+    return wrapper;
   }
 
   function makeExamplesControl(field, examples) {
@@ -398,7 +432,7 @@
       header.append(name, remove);
       const textarea = el('textarea', 'field-textarea');
       textarea.value = examples[index];
-      textarea.placeholder = 'Paste a complete letter with line breaks, or enter example-letter.md';
+      textarea.placeholder = field.placeholder;
       textarea.dataset.exampleText = String(index);
       textarea.setAttribute('aria-label', `Example letter ${index + 1}`);
       textarea.addEventListener('input', commit);
@@ -424,35 +458,35 @@
     const id = `field-${field.path.replaceAll('.', '-')}`;
     const label = el('label', 'field-label', field.label);
     label.htmlFor = id;
-    const helpButton = el('button', 'help-button', '?');
-    helpButton.type = 'button';
-    helpButton.setAttribute('aria-label', `Explain ${field.label}`);
-    helpButton.setAttribute('aria-expanded', String(state.openHelp === field.path));
-    helpButton.setAttribute('aria-controls', `${id}-help`);
-    helpButton.addEventListener('click', () => {
-      state.openHelp = state.openHelp === field.path ? null : field.path;
-      render();
-      document.querySelector(`[aria-controls="${id}-help"]`)?.focus();
-    });
-    header.append(label, helpButton);
-    const description = el('p', 'field-description', field.guidance || field.explanation);
+    header.append(label);
+    const description = el('p', 'field-description', field.hint);
     description.id = `${id}-description`;
     card.append(header, description, makeFieldControl(field));
-    const example = el('div', 'field-example');
-    example.id = `${id}-example`;
-    example.append(el('p', 'example-label', 'Example YAML · fictional values'), el('pre', '', field.example));
-    card.append(example);
-
+    if (!field.help && !field.checklist?.length) return card;
+    const helpButton = el('button', 'help-button', '?');
+    helpButton.type = 'button';
+    helpButton.setAttribute('aria-label', `More about ${field.label}`);
+    helpButton.setAttribute('aria-expanded', String(state.openHelp === field.path));
+    helpButton.setAttribute('aria-controls', `${id}-help`);
+    header.append(helpButton);
     const help = el('div', 'help-panel');
     help.id = `${id}-help`;
     help.hidden = state.openHelp !== field.path;
-    help.append(el('p', '', field.explanation));
+    if (field.help) help.append(el('p', '', field.help));
     if (field.checklist) {
       const checklist = el('ul');
       for (const item of field.checklist) checklist.append(el('li', '', item));
       help.append(checklist);
     }
     card.append(help);
+    helpButton.addEventListener('click', () => {
+      state.openHelp = state.openHelp === field.path ? null : field.path;
+      for (const button of document.querySelectorAll('.help-button')) {
+        const expanded = button === helpButton && state.openHelp === field.path;
+        button.setAttribute('aria-expanded', String(expanded));
+        document.getElementById(button.getAttribute('aria-controls')).hidden = !expanded;
+      }
+    });
     return card;
   }
 
@@ -466,6 +500,7 @@
     $('#raw-panel').hidden = section.id !== 'raw';
     $('#fields').hidden = section.id === 'raw';
     $('.help-hint').hidden = section.id === 'raw';
+    $('#entry-guidance').hidden = section.id === 'raw';
     if (section.id === 'raw') {
       $('#raw-text').value = state.source;
     } else {
@@ -523,24 +558,25 @@
         downloadBlob(state.cvFile, state.cvFile.name);
         state.cvPending = false;
         render();
-        toast(`Move the downloaded PDF to private/${state.cvFile.name}. Save your YAML there too.`);
+        toast(`Move the downloaded PDF to private/${state.cvFile.name}. Save your configuration there too.`);
       });
       actions.append(download);
     }
     const message = state.cvFile
-      ? `${state.cvFile.name} (${(state.cvFile.size / 1000).toFixed(1)} KB) selected. ${state.cvPending ? 'The PDF still needs to be saved into private/.' : 'Keep the PDF in private/ alongside your YAML.'}`
-      : 'Choose your finished PDF. Selection updates the filename; the PDF stays on your device.';
+      ? `${state.cvFile.name} (${(state.cvFile.size / 1000).toFixed(1)} KB) selected. ${state.cvPending ? 'Ready to save into private/.' : 'Keep the PDF in private/ alongside your configuration.'}`
+      : 'No PDF selected in this editor.';
     const status = el('p', 'field-caption', message);
     status.setAttribute('role', 'status');
     wrapper.append(filenameControl, picker, actions, status);
-    wrapper.append(el('p', 'field-caption', typeof window.showDirectoryPicker === 'function'
-      ? 'Use “Save to private/” to write instructions.yaml and the selected PDF together in your private folder.'
-      : 'Download the YAML and selected PDF, then move both to the repository’s private/ folder.'));
     return wrapper;
   }
 
   async function savePrivateFolder() {
     if (!verifyBeforeExport()) return;
+    if (typeof window.showDirectoryPicker !== 'function') {
+      downloadFile();
+      return;
+    }
     const source = state.source;
     const cvFile = state.cvFile;
     try {
@@ -610,7 +646,7 @@
       try {
         const [handle] = await window.showOpenFilePicker({
           multiple: false,
-          types: [{ description: 'YAML configuration', accept: { 'text/plain': ['.yaml', '.yml'] } }]
+          types: [{ description: 'Application Filler configuration', accept: { 'text/plain': ['.yaml', '.yml'] } }]
         });
         const file = await handle.getFile();
         loadFile(await file.text(), file.name, handle);
@@ -637,8 +673,8 @@
     state.dirty = false;
     refreshHeader();
     toast(state.cvPending
-      ? 'YAML downloaded. Download your selected PDF in Documents & cover letters too; put both in private/.'
-      : 'YAML downloaded. Place it in your bot’s private/ folder.');
+      ? 'Configuration downloaded. Download your selected PDF in Documents & cover letters too; put both in private/.'
+      : 'Configuration downloaded. Place it in your bot’s private/ folder.');
   }
 
   async function saveFile() {
@@ -653,7 +689,7 @@
       if (!handle) {
         handle = await window.showSaveFilePicker({
           suggestedName: state.filename,
-          types: [{ description: 'YAML configuration', accept: { 'text/plain': ['.yaml', '.yml'] } }]
+          types: [{ description: 'Application Filler configuration', accept: { 'text/plain': ['.yaml', '.yml'] } }]
         });
       }
       const writable = await handle.createWritable();
@@ -693,7 +729,10 @@
   });
   $('#download-button').addEventListener('click', downloadFile);
   $('#save-button').addEventListener('click', saveFile);
-  $('#save-folder-button').hidden = typeof window.showDirectoryPicker !== 'function';
+  if (typeof window.showDirectoryPicker !== 'function') {
+    $('#save-folder-button').textContent = 'Download for private/';
+    $('#save-guidance').hidden = false;
+  }
   $('#save-folder-button').addEventListener('click', savePrivateFolder);
   $('#raw-text').addEventListener('input', (event) => {
     state.source = event.target.value;
@@ -709,7 +748,7 @@
   window.addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
       event.preventDefault();
-      saveFile();
+      savePrivateFolder();
     }
   });
 

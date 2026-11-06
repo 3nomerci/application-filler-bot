@@ -78,21 +78,22 @@ Start-Process .\config-editor\index.html
 The editor runs locally and offline, with **no Python, Node.js, installation or
 server required**. The bot and its validator continue to run inside Docker.
 
-1. Click **Open YAML** and select `private/instructions.yaml`, or start with **New**.
-2. Fill in the sections. Every field shows example YAML and guidance; **?** opens
-   additional help. Examples are fictional and do not fill in your personal facts.
+1. Click **Open configuration** and select `private/instructions.yaml`, or start with **New**.
+2. Fill in the sections using plain text, without surrounding quotation marks.
+   Empty text fields show examples; date fields use the format shown by your browser.
+   **?** opens extra details where helpful. Examples do not fill in your personal facts.
 3. In **Documents & cover letters**, use **Upload CV PDF** to select your finished
    PDF (up to 10 MB). Add your own factual background separately: the bot does not
    extract it from the CV. Optional past letters guide style; writing instructions
    control tone, language, length and emphasis.
 4. Where available, **Save to private/** lets you choose the repository's `private/`
    folder and save `instructions.yaml` and the selected PDF together. Otherwise use
-   **Save file** / **Download** for YAML and **Download selected PDF** for the CV,
+   **Download for private/** or **Download**, and **Download selected PDF** for the CV,
    then move both to `private/`. Selecting a PDF alone does not copy it there.
 5. Run the Docker validation command in section 3 before running the bot. The editor
    checks syntax and settings; Docker validation also checks referenced letter files.
 
-The page follows your system's light or dark appearance. See the
+The editor uses a consistent light appearance, including when your system uses dark mode. See the
 [editor guide](config-editor/README.md) for browser support and saving details.
 
 | Section | What to provide |
@@ -125,7 +126,9 @@ instructions: >-
   Ask about anything not supported by my facts or these preferences.
 ```
 
-Use quoted `"YYYY-MM-DD"` dates. Leave unknown facts blank or `null`; unknown does
+When editing the file directly, use quoted `"YYYY-MM-DD"` dates. The guided editor
+handles this formatting for you; do not add quotation marks in its fields.
+Leave unknown facts blank or `null` in the file; unknown does
 not mean “No.” Use your own wording: the agent maps it to the form's choices, so you
 do not need to know each website's exact labels. YAML indentation matters. Comments
 starting with `#` explain the file to you; write instructions for the agent as actual
