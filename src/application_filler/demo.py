@@ -1,6 +1,7 @@
 """Local integration fixture and explicitly scripted model double. Never used for real URLs."""
 
 import json
+import re
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -79,9 +80,14 @@ def demo_settings() -> Settings:
             "email": "alex@example.com",
             "relocation": "Yes",
             "citizenships": ["IT"],
+            "demo_privacy_consent": True,
         }
     )
     settings.documents.background = "I build Python services. This is fictional demo information."
+    settings.instructions = (
+        "Complete this fictional local practice application. I explicitly accept its fictional "
+        "privacy terms and authorize the local test submission. Use only the fictional profile."
+    )
     settings.answers.topics["consent"] = "infer"
     settings.submission = "auto"
     settings.browser.delay_ms = 100
@@ -100,15 +106,35 @@ class ScriptedDemoClient:
     def message(self, system, messages, tools, searches=0):
         self.calls += 1
         page = None
-        for message in messages:
-            if message["role"] != "user":
-                continue
+        for message in messages[-1:]:
             items = (
                 message["content"]
                 if isinstance(message["content"], list)
                 else [{"content": message["content"]}]
             )
             for item in items:
+                if isinstance(item.get("content"), list):
+                    # Consume native browser observations, just as a real model does.
+                    for block in item["content"]:
+                        if block.get("type") != "text":
+                            continue
+                        controls = []
+                        for line in block["text"].splitlines():
+                            match = re.match(r"\s*\[(ref_\d+)\] (\{.*\})$", line)
+                            if match:
+                                control = {
+                                    "ref": match[1],
+                                    "name": "",
+                                    "value": "",
+                                    "files": [],
+                                    "checked": False,
+                                    "label": "",
+                                }
+                                control.update(json.loads(match[2]))
+                                controls.append(control)
+                        if controls:
+                            page = {"controls": controls, "text": block["text"]}
+                    continue
                 try:
                     data = json.loads(item["content"])
                 except (KeyError, ValueError, TypeError):
@@ -116,11 +142,11 @@ class ScriptedDemoClient:
                 candidate = data.get("page", data)
                 if isinstance(candidate, dict) and "controls" in candidate:
                     page = candidate
+        controls = page["controls"] if page else []
+        tool, args = "read_page", {"filter": "all", "depth": 30}
         if page is None:
-            raise AssertionError("Test double requires a real browser observation")
-        controls = page["controls"]
-        tool, args = "read_page", {}
-        if "Application received. Thank you!" in page["text"]:
+            pass  # A native action returned only an acknowledgement: observe its outcome.
+        elif "Application received. Thank you!" in page["text"]:
             tool, args = (
                 "complete",
                 {
@@ -131,7 +157,7 @@ class ScriptedDemoClient:
             )
         elif any("Apply for" in x["label"] for x in controls):
             target = next(x for x in controls if "Apply for" in x["label"])
-            tool, args = "click", {"ref": target["ref"], "purpose": "apply"}
+            tool, args = "left_click", {"target": {"type": "ref", "ref": target["ref"]}}
         elif any(x["name"] == "q1" for x in controls):
             fields = {x["name"]: x for x in controls if x["name"]}
             if not fields["q1"]["value"]:
@@ -166,11 +192,14 @@ class ScriptedDemoClient:
                 )
             else:
                 target = next(x for x in controls if x["label"] == "Next")
-                tool, args = "click", {"ref": target["ref"], "purpose": "next"}
+                tool, args = "left_click", {"target": {"type": "ref", "ref": target["ref"]}}
         else:
             files = {x["name"]: x for x in controls if x["kind"] == "file"}
             if not files["cv"]["files"]:
-                tool, args = "upload_document", {"ref": files["cv"]["ref"], "kind": "cv"}
+                tool, args = (
+                    "file_upload",
+                    {"target": {"type": "ref", "ref": files["cv"]["ref"]}, "document_ids": ["cv"]},
+                )
             elif not self.letter_created:
                 tool, args = (
                     "create_cover_letter",
@@ -183,8 +212,11 @@ class ScriptedDemoClient:
                 self.letter_created = True
             elif not files["letter"]["files"]:
                 tool, args = (
-                    "upload_document",
-                    {"ref": files["letter"]["ref"], "kind": "cover_letter"},
+                    "file_upload",
+                    {
+                        "target": {"type": "ref", "ref": files["letter"]["ref"]},
+                        "document_ids": ["cover_letter"],
+                    },
                 )
             else:
                 consent = next(x for x in controls if x["kind"] == "checkbox")
@@ -211,6 +243,16 @@ class ScriptedDemoClient:
             "stop_reason": "tool_use",
             "usage": {},
             "content": [
-                {"type": "tool_use", "id": f"fixture-{self.calls}", "name": tool, "input": args}
+                {
+                    "type": "tool_use",
+                    "id": f"fixture-{self.calls}",
+                    "name": tool,
+                    "input": args,
+                    **(
+                        {"toolset_name": "browser"}
+                        if tool in {"read_page", "left_click", "file_upload"}
+                        else {}
+                    ),
+                }
             ],
         }

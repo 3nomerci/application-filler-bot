@@ -3,7 +3,6 @@ import threading
 
 import httpx
 import pytest
-import yaml
 from pydantic import ValidationError
 from pypdf import PdfReader
 
@@ -220,31 +219,25 @@ def test_private_paths_pdf_unicode_and_cleanup(tmp_path):
     assert outside.exists() and not pdf.exists()
 
 
-def test_migration_backs_up_and_preserves_explicit_ask(tmp_path, monkeypatch):
+def test_initialization_copies_neutral_template_and_preserves_personal_files(tmp_path, monkeypatch):
     from pathlib import Path
 
     template = Path("examples/instructions.yaml").read_text(encoding="utf-8")
     (tmp_path / "examples").mkdir()
     (tmp_path / "examples/instructions.yaml").write_text(template, encoding="utf-8")
-    (tmp_path / "private").mkdir()
-    old = {
-        "version": 1,
-        "candidate": {"full_name": "Fictional Person"},
-        "rules": {"expected_salary": {"action": "ask"}},
-        "submission": {"mode": "manual"},
-    }
     target = tmp_path / "private/instructions.yaml"
-    target.write_text(yaml.safe_dump(old), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    initialize(upgrade=True)
+    initialize()
     config = load_settings(target)
-    assert config.candidate["full_name"] == "Fictional Person"
-    assert config.answers.topics["salary"] == "ask"
-    backups = list((tmp_path / "private").glob("instructions-v1-*.yaml"))
-    assert len(backups) == 1 and yaml.safe_load(backups[0].read_text()) == old
-    before = target.read_bytes()
-    initialize(upgrade=True)
-    assert target.read_bytes() == before
+    assert config.candidate["citizenships"] == []
+    assert config.candidate["full_name"] == ""
+    assert config.submission == "manual"
+    target.write_text("# Personal instructions\nversion: 2\ninstructions: Ask about salary\n")
+    links = tmp_path / "private/links.txt"
+    links.write_text("https://example.com/job\n")
+    before = target.read_bytes(), links.read_bytes()
+    initialize()
+    assert (target.read_bytes(), links.read_bytes()) == before
 
 
 def test_examples_accept_yaml_letters_and_existing_files(tmp_path):

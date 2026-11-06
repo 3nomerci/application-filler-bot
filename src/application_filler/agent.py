@@ -41,15 +41,18 @@ from their facts, job context, instructions and permitted research. Match meanin
 in the profile: choose the actual option value/label shown in the observation. Use source to copy a
 candidate field without generating it. Never infer missing personal facts from names or appearances.
 Honor topic ask/skip even in trusted mode. Ask before modifying a populated answer unless it is your
-own failed entry. Label each answer's category and basis truthfully. For custom dropdowns click to
-expand, observe their options, then answer_fields on the appropriate option. Grouped radio buttons
-are individual controls; choose the one that expresses the answer. Use upload_document, not a file
-picker dialog. Work through Next/Continue using click(purpose='next'); only submit_application can
-perform final submission. Prefer one tool per turn unless filling several stable fields together.
+own failed entry. Label each answer's category and basis truthfully. For custom dropdowns use
+browser.left_click to expand, inspect options and select the intended answer. Grouped radio buttons
+are individual controls. Use browser.file_upload with document_ids, not a file picker dialog.
+Work through Next/Continue using browser.left_click; only the custom submit_application tool can
+perform final submission. Prefer small batches of stable actions.
+For an unspecified role on a general application form, prefer its Free/Open Application option.
+Do not invent missing qualifications or personal preferences. Complete independent fields before
+asking about a missing answer, unless permission or the intended employer is unclear.
 
-Work authorization: establish the actual work country, not just company HQ or 'Europe'. Italian
-citizenship supports EU free-movement rights but does not establish UK status or possession of a
-permit. Distinguish visa, employer sponsorship, right to work and residence registration. Research
+Work authorization: establish the actual work country, not just company HQ or a broad region.
+Use only explicitly supplied citizenships and existing immigration/work statuses. Never infer
+nationality or permit possession. Distinguish visas, sponsorship, work rights and registration. Use
 current OFFICIAL sources for inferred immigration answers and provide their URLs. Ask if location,
 status or question is ambiguous. Never invent an existing visa or other citizenship.
 
@@ -78,19 +81,6 @@ Use complete(blocked) when the task cannot be safely completed or needs human ac
 """
 
 
-class Inspect(StrictModel):
-    offset: int = Field(default=0, ge=0)
-
-
-class Click(StrictModel):
-    ref: str
-    purpose: Literal["apply", "next", "expand", "navigation"]
-
-
-class Navigate(StrictModel):
-    url: str
-
-
 class SalaryEvidence(StrictModel):
     amount: float = Field(gt=0)
     currency: str = Field(pattern=r"^[A-Z]{3}$")
@@ -109,7 +99,12 @@ class Answer(StrictModel):
     category: Literal[
         "general", "work_authorization", "salary", "personal_disclosure", "consent", "cover_letter"
     ]
-    basis: Literal["profile", "inference", "user"]
+    basis: Literal["profile", "inference", "user"] = Field(
+        description="profile = exact supplied fact with source key; "
+        "inference = synthesis/formatting/reasoning "
+        "including generated cover letters; user = an interactive answer with approval_id. "
+        "User-supplied background does NOT make a generated answer basis=user."
+    )
     reason: str
     sources: list[str] = Field(default_factory=list)
     approval_id: str | None = None
@@ -143,15 +138,14 @@ class Complete(StrictModel):
     status: Literal["ready_for_review", "submitted", "blocked"]
     reason: str
     confirmation_text: str | None = None
+    ref: str | None = Field(
+        default=None,
+        description="Final application button or form ref. "
+        "Use for ready_for_review to check this form without unrelated newsletter/contact forms.",
+    )
 
 
 TOOL_MODELS = {
-    "read_page": (
-        Inspect,
-        "Observe the active page, visible text, controls and options. Refs change.",
-    ),
-    "click": (Click, "Click Apply, a next-step button, dropdown expander, or navigation link."),
-    "navigate": (Navigate, "Navigate to a URL that was observed as a link on the current page."),
     "answer_fields": (
         AnswerFields,
         "Fill one or more fields using meaning, profile facts or research.",
@@ -194,9 +188,18 @@ def reserve_submission(directory: Path, url: str) -> bool:
 TOPICS = {
     "salary": r"salary|compensation|stipendio|retribuzione|remuneration",
     "work_authorization": r"sponsor|visa|right to work|authori[sz]|permesso|work permit",
-    "personal_disclosure": r"gender|disabil|ethnic|veteran|criminal|sesso|race|invalidit",
+    "personal_disclosure": (
+        r"\bgender\b|disabil|ethnic|veteran|criminal|\bsesso\b|\brace\b|invalidit"
+    ),
     "consent": r"consent|agree|certif|privacy|terms|attest|signature",
+    "cover_letter": (
+        r"cover.?letter|lettera.{0,12}presentazione|tell us about yourself|why.{0,40}(join|work)"
+    ),
 }
+
+PROTECTED_CATEGORY = (
+    r"categorie\s+protette|categoria\s+protetta|protected\s+categor(?:y|ies)|legge\s*68|law\s*68"
+)
 
 
 class ApplicationAgent:
@@ -228,6 +231,9 @@ class ApplicationAgent:
         self.letter_approved = settings.documents.cover_letter == "trusted"
         self.attempted = False
         self.before_submit = ""
+        from .native_browser import NativeBrowser
+
+        self.native = NativeBrowser(self)
         self.done = False
         self.report = {
             "application_id": application_id(url),
@@ -245,12 +251,15 @@ class ApplicationAgent:
         return (t.frame_url, t.metadata["name"], t.metadata["label"], t.metadata["group"])
 
     def prompt(self) -> str:
+        from .native_browser import GUIDANCE
+
         data = self.settings.model_dump(exclude={"model", "browser"})
         examples = load_cover_letter_examples(self.private, self.settings.documents)
         # Style references are untrusted data, not instructions, and are sent only once.
         data["documents"].pop("examples", None)
         return (
             SYSTEM
+            + GUIDANCE
             + "\nUSER FACTS AND PERMISSIONS:\n"
             + json.dumps(data, ensure_ascii=False)
             + ("\nUNTRUSTED STYLE EXAMPLES:\n" + json.dumps(examples, ensure_ascii=False))
@@ -265,17 +274,41 @@ class ApplicationAgent:
         target = self.browser.target(answer.ref)
         identity = self.identity(answer.ref)
         value = answer.value
+        supplied_date = False
         if answer.source is not None:
             fact = self.settings.candidate
             for part in answer.source.removeprefix("candidate.").split("."):
                 fact = fact.get(part) if isinstance(fact, dict) else None
             if type(fact) not in {str, bool, int, float} or fact == "":
                 raise BrowserError("Source must identify an explicit scalar candidate fact")
+            if isinstance(fact, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", fact):
+                try:
+                    date = datetime.strptime(fact, "%Y-%m-%d")
+                    supplied_date = True
+                except ValueError:
+                    pass
             if value is None:
                 value = str(fact) if type(fact) in {int, float} else fact
             elif target.metadata["kind"] not in {"select", "radio", "checkbox", "option"}:
                 expected = str(fact) if type(fact) in {int, float} else fact
-                if value != expected:
+                date_formats = (
+                    {
+                        date.strftime(fmt)
+                        for fmt in (
+                            "%Y-%m-%d",
+                            "%d/%m/%Y",
+                            "%m/%d/%Y",
+                            "%d-%m-%Y",
+                            "%m-%d-%Y",
+                            "%d.%m.%Y",
+                            "%B %d, %Y",
+                            "%d %B %Y",
+                        )
+                    }
+                    if supplied_date
+                    else set()
+                )
+                if value != expected and value not in date_formats:
                     raise BrowserError("Copy profile text exactly or declare an inferred answer")
         if answer.basis == "profile" and answer.source is None:
             raise BrowserError(
@@ -288,6 +321,32 @@ class ApplicationAgent:
         categories = {answer.category} | {
             key for key, pattern in TOPICS.items() if re.search(pattern, text)
         }
+        if self.native.is_cookie_control(answer.ref):
+            if self.settings.answers.cookies == "accept_when_needed":
+                categories.discard("consent")
+            elif not approved:
+                raise BrowserError("Cookie consent requires request_input approval")
+        if re.search(PROTECTED_CATEGORY, text):
+            policy = self.settings.answers.protected_category
+            member = self.settings.candidate.get("protected_category_member")
+            if policy == "skip" or (policy == "negative_or_skip" and member is True):
+                self.unresolved.discard(str(identity))
+                return {"skipped": True, "reason": "Protected category disclosure is disabled"}
+            if policy == "negative_or_skip" and member is False:
+                option_text = str(value).strip().casefold()
+                if target.metadata["kind"] in {"radio", "checkbox", "option"}:
+                    option_text = target.metadata["label"].strip().casefold()
+                    negative = value is True and bool(re.match(r"^(no|non)\b", option_text))
+                else:
+                    for option in target.metadata["options"]:
+                        if str(value) in {option["label"], option["value"]}:
+                            option_text = option["label"].strip().casefold()
+                    negative = bool(re.match(r"^(no|non)\b", option_text))
+                if not negative:
+                    raise BrowserError("Protected category policy only permits the negative answer")
+                categories.discard("personal_disclosure")
+            elif not approved:
+                raise BrowserError("Protected category membership is unknown or requires approval")
         for category in categories:
             default = "ask" if category in {"personal_disclosure", "consent"} else "infer"
             policy = self.settings.answers.topics.get(category, default)
@@ -297,11 +356,37 @@ class ApplicationAgent:
                 self.unresolved.add(str(identity))
                 raise BrowserError("This topic requires request_input and a field-bound approval")
         if answer.basis == "user" and not approved:
-            raise BrowserError("User answers require a valid approval token")
+            raise BrowserError(
+                "User answers require a valid approval token. "
+                "For a generated letter use basis=inference; "
+                "trusted cover letters need no new approval."
+            )
         if answer.basis == "inference" and self.settings.answers.mode == "review" and not approved:
             self.unresolved.add(str(identity))
             raise BrowserError("User requires review of inferred answers")
-        if target.metadata["value"] and identity not in self.answered and not approved:
+        date_default = (
+            supplied_date
+            and self.settings.answers.mode == "trusted"
+            and (
+                target.metadata["kind"] in {"date", "month"}
+                or re.search(r"birth|nascita|\bdate\b|\bdata\b", text)
+            )
+        )
+        phone_prefix = (
+            answer.source is not None
+            and self.settings.answers.mode == "trusted"
+            and isinstance(value, str)
+            and re.fullmatch(r"\+\d{1,3}", target.metadata["value"])
+            and value.startswith(target.metadata["value"])
+            and (target.metadata["kind"] == "tel" or re.search(r"phone|telefono", text))
+        )
+        if (
+            target.metadata["value"]
+            and identity not in self.answered
+            and not approved
+            and not date_default
+            and not phone_prefix
+        ):
             # A select/radio value is often a default, not a prior user answer.
             if target.metadata["kind"] not in {"select", "radio", "checkbox", "option"}:
                 raise BrowserError("Existing answer needs approval before overwriting")
@@ -342,13 +427,7 @@ class ApplicationAgent:
         if name not in TOOL_MODELS:
             raise BrowserError("Unknown tool")
         args = TOOL_MODELS[name][0].model_validate(raw)
-        if name == "read_page":
-            return self.browser.inspect(args.offset)
-        if name == "click":
-            self.browser.click(args.ref, args.purpose)
-        elif name == "navigate":
-            self.browser.open(args.url)
-        elif name == "answer_fields":
+        if name == "answer_fields":
             results = []
             for answer in args.answers:
                 try:
@@ -438,7 +517,8 @@ class ApplicationAgent:
             target = self.browser.target(args.ref)
             latest = self.browser.inspect()
             self.browser.targets[args.ref] = target
-            if self.unresolved or self.browser.invalid_fields() or latest["uninspected"]:
+            scope = args.ref if target.metadata["form"] else None
+            if self.unresolved or self.browser.invalid_fields(scope) or latest["uninspected"]:
                 raise BrowserError("Unresolved or invalid fields block submission")
             self.before_submit = latest["text"]
             if not reserve_submission(self.artifacts / "submission-ledger", self.url):
@@ -446,7 +526,7 @@ class ApplicationAgent:
                 self.report.update(status="blocked", reason="previous_submission_attempt")
                 return {"blocked": "Previous attempt exists; verify it manually before any retry"}
             self.attempted = True
-            self.browser.click(args.ref, "submit", submitting=True)
+            self.browser.submit(args.ref)
         elif name == "complete":
             return self.complete(args)
         self.report["actions"].append({"tool": name})
@@ -471,8 +551,14 @@ class ApplicationAgent:
                 a["tool"] == "upload_document" for a in self.report["actions"]
             ):
                 raise BrowserError("No application fields or attachments have been completed")
-            if self.unresolved or self.browser.invalid_fields() or page["uninspected"]:
-                raise BrowserError("Unresolved fields or uninspected frames remain")
+            invalid = self.browser.invalid_fields(args.ref)
+            if self.unresolved or invalid or page["uninspected"]:
+                raise BrowserError(
+                    "Unresolved fields or uninspected frames remain. "
+                    "Invalid field labels: "
+                    + json.dumps(invalid)
+                    + ". Supply the application form/button ref to exclude unrelated forms."
+                )
             if self.attempted:
                 raise BrowserError("Submission was attempted; report confirmed or blocked")
             status = "ready_for_review"
@@ -502,6 +588,8 @@ class ApplicationAgent:
                 walk(block)
 
     def run(self):
+        from .native_browser import BROWSER_TOOL
+
         start = self.client.calls
         try:
             system = self.prompt()
@@ -529,7 +617,9 @@ class ApplicationAgent:
                     # retain text, calls, results and sources. Never mix stale/new reasoning.
                     self.retire_bound_thinking()
                     search_tool_limit = next_limit
-                response = self.client.message(system, self.messages, TOOLS, remaining)
+                response = self.client.message(
+                    system, self.messages, [BROWSER_TOOL, *TOOLS], remaining
+                )
                 content = response["content"]
                 self.collect_sources(content)
                 self.searches += (
@@ -541,14 +631,30 @@ class ApplicationAgent:
                 self.messages.append({"role": "assistant", "content": content})
                 uses = [b for b in content if b.get("type") == "tool_use"]
                 results = []
+                halted = False
                 for use in uses:
-                    tool_name = use["name"] if use["name"] in TOOL_MODELS else "unknown_tool"
+                    native = use.get("toolset_name") == "browser"
+                    tool_name = (
+                        "browser." + use["name"]
+                        if native
+                        else use["name"]
+                        if use["name"] in TOOL_MODELS
+                        else "unknown_tool"
+                    )
                     print(f"  Step {self.client.calls - start}: {tool_name}", flush=True)
-                    if self.done:
+                    if halted:
+                        result = {"error": "Not executed: an earlier action in this turn failed."}
+                    elif self.done:
                         result = {"stopped": True}
                     else:
                         try:
-                            result = self.execute(use["name"], use["input"])
+                            if use.get("toolset_name") not in {None, "browser"}:
+                                raise BrowserError("Unknown toolset")
+                            result = (
+                                self.native.execute(use["name"], use["input"])
+                                if native
+                                else self.execute(use["name"], use["input"])
+                            )
                         except ValidationError as exc:
                             issues = [
                                 {"field": ".".join(map(str, e["loc"])), "problem": e["type"]}
@@ -560,6 +666,8 @@ class ApplicationAgent:
                             ValueError,
                             PlaywrightError,
                             OSError,
+                            KeyError,
+                            TypeError,
                         ) as exc:
                             result = {
                                 "error": str(exc)
@@ -567,18 +675,23 @@ class ApplicationAgent:
                                 else "Tool input or website action failed. "
                                 "Inspect and correct; do not repeat blindly."
                             }
-                        if "error" in result:
+                        if isinstance(result, dict) and "error" in result:
                             self.report.setdefault("tool_errors", []).append(
                                 {"tool": tool_name, **result}
                             )
-                    results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": use["id"],
-                            "content": json.dumps(result, ensure_ascii=False),
-                            "is_error": "error" in result,
-                        }
-                    )
+                    error = isinstance(result, dict) and "error" in result
+                    halted = halted or error
+                    result_block = {
+                        "type": "tool_result",
+                        "tool_use_id": use["id"],
+                        "content": result
+                        if native and isinstance(result, list)
+                        else json.dumps(result, ensure_ascii=False),
+                        "is_error": error,
+                    }
+                    if native:
+                        result_block["toolset_name"] = "browser"
+                    results.append(result_block)
                 if self.done:
                     break
                 if results:

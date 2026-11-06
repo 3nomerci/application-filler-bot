@@ -125,10 +125,8 @@ class BrowserSession:
         self.context, self.guard, self.settings = context, guard, settings
         self.page: Page = context.new_page()
         self.targets: dict[str, Target] = {}
-        self.links: set[str] = set()
-        self.generation = 0
+        self.ref_counter = 0
         self.actions = 0
-        self.events: list[dict] = []
         context.route("**/*", guard.route)
         # Applications may use sockets, but exposing the model gateway is not acceptable.
         context.route_web_socket("**/*", lambda socket: socket.close())
@@ -140,9 +138,7 @@ class BrowserSession:
         page.on("dialog", lambda dialog: dialog.dismiss())
         self.page = page  # Popups opened by Apply become the active application page.
 
-    def open(self, url: str, initial=False):
-        if not initial and url not in self.links:
-            raise BrowserError("Navigate only to a link observed on the current page")
+    def open(self, url: str):
         if not self.guard.allowed(url):
             raise BrowserError("Destination needs host approval")
         response = self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -159,14 +155,11 @@ class BrowserSession:
             frame = frame.parent_frame
         return bool(frame and self.guard.allowed(frame.url))
 
-    def inspect(self, offset: int = 0) -> dict:
+    def inspect(self) -> dict:
         if self.page.is_closed():
             raise BrowserError("Browser tab was closed")
         if not self.guard.allowed(self.page.url):
             raise BrowserError("Page is outside permitted destinations")
-        self.generation += 1
-        self.targets = {}
-        self.links = set()
         controls = []
         texts = []
         excluded = []
@@ -191,28 +184,47 @@ class BrowserSession:
                 meta = element.evaluate(META)
                 if meta["kind"] == "hidden":
                     continue
-                ref = f"s{self.generation}-e{len(controls)}"
-                self.targets[ref] = Target(element, meta, frame.url)
+                ref = self.register(element, meta)
                 controls.append({"ref": ref, "frame": index, **meta})
-                if meta["href"]:
-                    self.links.add(meta["href"])
         text = "\n".join(texts)
         return {
             "url": self.page.url,
             "title": self.page.title(),
             "text": text[: self.settings.browser.snapshot_chars],
             "text_truncated": len(text) > self.settings.browser.snapshot_chars,
-            "controls": controls[offset : offset + 100],
+            "controls": controls[:100],
             "total_controls": len(controls),
-            "next_offset": offset + 100 if len(controls) > offset + 100 else None,
+            "controls_truncated": len(controls) > 100,
             "uninspected": excluded,
             "blocked_host": self.guard.blocked_host,
         }
+
+    def register(self, element, metadata=None):
+        self.ref_counter += 1
+        ref = element.evaluate(
+            """(el, proposed) => {
+            const key = Symbol.for('application-filler.refs');
+            const refs = window[key] ||= new WeakMap();
+            if (!refs.has(el)) refs.set(el, proposed);
+            return refs.get(el);
+        }""",
+            f"ref_{self.ref_counter}",
+        )
+        self.targets[ref] = Target(
+            element, metadata or element.evaluate(META), element.owner_frame().url
+        )
+        return ref
 
     def target(self, ref: str) -> Target:
         target = self.targets.get(ref)
         if not target:
             raise BrowserError("Stale reference: inspect the current page again")
+        try:
+            attached = target.element.evaluate("el=>el.isConnected")
+        except Exception:
+            attached = False
+        if not attached:
+            raise BrowserError("Stale reference: the element was replaced or its page navigated")
         frame = target.element.owner_frame()
         if frame is None or frame.url != target.frame_url or not self.allowed_frame(frame):
             raise BrowserError("Frame changed; inspect again")
@@ -232,19 +244,16 @@ class BrowserSession:
             raise BrowserError("Browser action budget reached")
         self.actions += 1
 
-    def is_submission(self, target: Target, purpose: str) -> bool:
+    def is_submission(self, target: Target) -> bool:
         m = target.metadata
-        if purpose == "submit":
-            return True
         label = m["label"].casefold()
         next_step = bool(re.search(r"\b(next|continue|back|previous|avanti|indietro)\b", label))
         final = bool(re.search(r"\b(submit|send|finish|invia|conferma)\b", label))
         return final or (m["form"] and m["type"] == "submit" and not next_step)
 
-    def click(self, ref: str, purpose: str, submitting: bool = False):
+    def submit(self, ref: str):
+        """Called only after the agent authorizes and durably reserves submission."""
         target = self.target(ref)
-        if self.is_submission(target, purpose) and not submitting:
-            raise BrowserError("Use submit_application for final or ambiguous submit controls")
         if target.metadata["kind"] in {"checkbox", "radio", "option"}:
             raise BrowserError("Use answer_fields for answer choices")
         self.count_action()
@@ -301,10 +310,33 @@ class BrowserSession:
         if target.element.evaluate("el=>el.files[0]?.name") != path.name:
             raise BrowserError("Attachment was not accepted")
 
-    def invalid_fields(self) -> list[str]:
+    def invalid_fields(self, scope_ref: str | None = None) -> list[str]:
         invalid = []
+        scope = None
+        if scope_ref:
+            scope = (
+                self.target(scope_ref)
+                .element.evaluate_handle("el=>el.form||el.closest('form,[role=form]')")
+                .as_element()
+            )
+            if scope is None:
+                raise BrowserError(
+                    "Reference must identify the application form or a control in it"
+                )
         for target in self.targets.values():
             e = target.element
+            try:
+                if e.owner_frame() not in self.page.frames or not e.evaluate("el=>el.isConnected"):
+                    continue
+                if not e.is_visible() and target.metadata["kind"] != "file":
+                    continue
+            except Exception:
+                continue  # An old document's references cannot describe this form.
+            if scope and (
+                e.owner_frame() != scope.owner_frame()
+                or not e.evaluate("(el,form)=>el.form===form || form.contains(el)", scope)
+            ):
+                continue
             if not e.evaluate("""el => {
                 if (el.disabled || el.getAttribute('aria-disabled') === 'true') return true;
                 if (el.validity && !el.validity.valid) return false;

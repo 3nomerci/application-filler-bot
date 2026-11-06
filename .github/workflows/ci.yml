@@ -7,11 +7,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Keep personal files out of the repository
+        run: |
+          private_files="$(git ls-files -- private artifacts .secrets DOCUMENTATION.md .env compose.override.yaml compose.override.yml)"
+          if [ -n "$private_files" ]; then
+            echo 'Personal files or local documentation are tracked. Remove them from Git.' >&2
+            exit 1
+          fi
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.10.3"
       - run: uv sync --frozen --extra dev
       - run: uv run --frozen ruff check src tests
       - run: uv run --frozen ruff format --check src tests
+      - run: sh -n scripts/setup.sh
       - run: docker compose --env-file docker/compose.env build test
       - run: docker compose --env-file docker/compose.env run --rm --no-deps -T test

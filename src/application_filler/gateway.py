@@ -26,6 +26,12 @@ def validate_request(body: dict) -> None:
     for tool in body.get("tools", []):
         if not isinstance(tool, dict):
             raise ValueError("Invalid tool")
+        if tool.get("type") == "browser_toolset_20260801":
+            from .native_browser import BROWSER_TOOL
+
+            if tool != BROWSER_TOOL:
+                raise ValueError("Unsupported browser configuration")
+            continue
         if "type" in tool and tool["type"] not in {"web_search_20250305", "web_fetch_20250910"}:
             raise ValueError("Server tool is not allowed")
         if "type" in tool and not 1 <= tool.get("max_uses", 0) <= 2:
@@ -104,7 +110,7 @@ def serve(gateway: Gateway, address=("0.0.0.0", 8765)):
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= 1500000:
+                if not 0 < length <= 20000000:
                     raise ValueError
                 self.connection.settimeout(15)
                 body = json.loads(self.rfile.read(length))

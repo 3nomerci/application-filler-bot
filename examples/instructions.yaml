@@ -11,25 +11,40 @@ candidate:
   linkedin: ""
   github: ""
   address: ""
-  citizenships: [IT] # Tailored to the owner: Italian nationality only. Change for other users.
+  citizenships: [] # Your actual citizenships as country codes, e.g. [IT] or [CA, FR].
   residence_country: null # Do not confuse nationality with residence.
   existing_work_statuses: null # Unknown, not a claim that no statuses exist.
   relocation: ""
   start_date: ""
+  date_of_birth: null # Quoted ISO date, e.g. "2000-12-31"; never infer a missing date.
+  protected_category_member: null # Explicit false -> No; true -> skip; null -> ask.
+  education:
+    bachelors:
+      institution: ""
+      institution_local_name: ""
+      start_date: null # Quoted YYYY-MM-DD.
+      end_date: null # Completion/expected completion date; specify status separately if known.
+    masters:
+      institution: ""
+      institution_local_name: ""
+      start_date: null
+      end_date: null
 
 instructions: >-
   Apply for the jobs I provide using truthful facts and these preferences.
   Read the job and the actual questions/options; do not expect me to know their wording.
   Follow Apply links and relevant recruiting-platform handoffs. Work through multi-step forms.
   Do not create accounts, take tests or interviews, buy anything, or bypass challenges.
-  I hold only Italian citizenship. Establish the actual work country before answering visa
-  or sponsorship questions. For ordinary employment in EU member states use EU-citizen
-  work rights, checking official guidance. Do not extend this to all of Europe or invent
-  a UK immigration status. Distinguish sponsorship from possession of a residence permit.
+  Establish the actual work country before answering visa or sponsorship questions.
+  Use only my supplied citizenships and existing work statuses, checking official guidance.
+  Do not assume nationality from my name/address or invent a visa or residence permit.
+  Distinguish the right to work, employer sponsorship and residence registration.
   Ask if job location, personal status or question meaning cannot be established.
 
 answers:
   mode: trusted # trusted: allow supported inference; review: approve inferred answers first.
+  protected_category: negative_or_skip # Employment protected category only; ask/skip also supported.
+  cookies: accept_when_needed # Accept cookies needed to access the application; use ask to review.
   topics:
     work_authorization: infer
     salary: infer

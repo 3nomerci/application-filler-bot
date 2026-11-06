@@ -173,7 +173,7 @@ def test_iframe_srcdoc_and_apply_popup(application):
         "/form": '<iframe srcdoc="<label>City<input name=city></label>"></iframe>',
     }
     with application(pages) as a:
-        a.execute("click", {"ref": reference(a, "Apply"), "purpose": "apply"})
+        a.native.execute("left_click", {"target": {"type": "ref", "ref": reference(a, "Apply")}})
         a.answer(answer(reference(a, "City"), value="Rome"))
         assert a.browser.page.url.endswith("/form")
         assert a.browser.page.frames[1].locator("input").input_value() == "Rome"
@@ -205,7 +205,7 @@ def test_manual_submission_cannot_be_clicked_via_generic_tool(application):
     with application({"/": "<form><button>Send application</button></form>"}, config) as a:
         ref = reference(a, "Send application")
         with pytest.raises(BrowserError, match="submit_application"):
-            a.execute("click", {"ref": ref, "purpose": "next"})
+            a.native.execute("left_click", {"target": {"type": "ref", "ref": ref}})
         with pytest.raises(BrowserError, match="Manual submission"):
             a.execute("submit_application", {"ref": ref})
         assert not a.attempted
@@ -334,6 +334,9 @@ def test_stale_refs_and_hidden_required_file_block_actions(application):
     page = "<input type='file' required hidden><label>Name<input></label><button>Send</button>"
     with application({"/": page}) as a:
         old = reference(a, "Name")
+        a.browser.page.locator("input:not([type=file])").evaluate(
+            "el=>el.replaceWith(el.cloneNode(true))"
+        )
         a.browser.inspect()
         with pytest.raises(BrowserError, match="Stale reference"):
             a.answer(answer(old, value="Alex"))
@@ -350,7 +353,7 @@ def test_custom_dropdown_and_shadow_dom(application):
     document.getElementById('host').attachShadow({mode:'open'}).innerHTML=
     '<label>Portfolio<input></label>';</script>"""
     with application({"/": page}) as a:
-        a.execute("click", {"ref": reference(a, "Country"), "purpose": "expand"})
+        a.native.execute("left_click", {"target": {"type": "ref", "ref": reference(a, "Country")}})
         a.answer(answer(reference(a, "Italy"), value=True))
         a.answer(answer(reference(a, "Portfolio"), value="https://example.com"))
         assert a.browser.page.locator("output").inner_text() == "Italy"

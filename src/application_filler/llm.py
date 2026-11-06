@@ -42,7 +42,24 @@ class ClaudeClient:
                     "citations": {"enabled": True},
                 },
             ]
-        serialized = json.dumps(body, ensure_ascii=False)
+        # Image payload bytes are not text tokens. Keep the full append-only payload,
+        # but budget each viewport image separately rather than counting base64 as prose.
+        images = 0
+
+        def text_only(value):
+            nonlocal images
+            if isinstance(value, dict):
+                if value.get("type") == "image":
+                    images += 1
+                    return {"type": "image"}
+                return {k: text_only(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [text_only(v) for v in value]
+            return value
+
+        serialized = json.dumps(text_only(body), ensure_ascii=False)
+        if len(json.dumps(body).encode()) > 19000000:
+            raise ModelError("Image payload limit reached; no history was silently discarded")
         if len(serialized) > self.settings.max_request_chars:
             raise ModelError("Context limit reached; no instructions were silently discarded")
         if self.calls >= self.settings.max_calls_per_run:
@@ -50,6 +67,7 @@ class ClaudeClient:
         # Conservative local allowance, not a provider-enforced billing guarantee.
         reservation = (len(serialized.encode()) * 0.625 + body["max_tokens"] * 2.5) / 1e6
         reservation += min(searches, 2) * 0.01
+        reservation += images * 0.002  # Conservative allowance per viewport image.
         if self.estimated_usd + reservation > self.settings.estimated_budget_usd:
             raise ModelError("Local estimated cost budget reached")
         self.calls += 1

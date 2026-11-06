@@ -17,6 +17,8 @@ class StrictModel(BaseModel):
 
 class Answers(StrictModel):
     mode: Literal["trusted", "review"] = "trusted"
+    protected_category: Literal["negative_or_skip", "ask", "skip"] = "negative_or_skip"
+    cookies: Literal["accept_when_needed", "ask"] = "ask"
     topics: dict[
         Literal["work_authorization", "salary", "personal_disclosure", "consent"],
         Literal["infer", "ask", "skip"],
@@ -112,7 +114,10 @@ def load_yaml(path: Path):
 def load_settings(path: Path) -> Settings:
     data = load_yaml(path)
     if isinstance(data, dict) and data.get("version") == 1:
-        raise ValueError("Version 1 is retired. Run init --upgrade to preserve and migrate it.")
+        raise ValueError(
+            "Version 1 is retired. Copy the current example to a new file and "
+            "transfer your facts/preferences before using it."
+        )
     return Settings.model_validate(data)
 
 

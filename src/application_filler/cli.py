@@ -8,51 +8,24 @@ from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 
-import yaml
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 from pydantic import ValidationError
 
 from .agent import ApplicationAgent
 from .browser import BrowserError, BrowserSession, NetworkGuard
-from .config import load_cover_letter_examples, load_settings, load_yaml
+from .config import load_cover_letter_examples, load_settings
 from .demo import ScriptedDemoClient, demo_server, demo_settings
 from .documents import remove_generated, render_letter
 from .llm import ClaudeClient
 
 
-def initialize(upgrade=False):
+def initialize():
     root = Path("private")
     root.mkdir(exist_ok=True)
     target = root / "instructions.yaml"
     if not target.exists():
         shutil.copyfile("examples/instructions.yaml", target)
-    elif upgrade:
-        old = load_yaml(target)
-        if isinstance(old, dict) and old.get("version") == 1:
-            fresh = load_yaml(Path("examples/instructions.yaml"))
-            # Preserve user-entered facts without printing them or reading any .env/secret file.
-            fresh["candidate"].update(old.get("candidate", {}))
-            fresh["submission"] = old.get("submission", {}).get("mode", "manual")
-            for name, rule in old.get("rules", {}).items():
-                if name in {"expected_salary", "work_authorization", "sponsorship", "consent"}:
-                    if rule.get("action") == "ask":
-                        topic = {
-                            "expected_salary": "salary",
-                            "sponsorship": "work_authorization",
-                        }.get(name, name)
-                        fresh["answers"]["topics"][topic] = "ask"
-            backup = root / (
-                "instructions-v1-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f") + ".yaml"
-            )
-            shutil.copyfile(target, backup)
-            target.write_text(
-                yaml.safe_dump(fresh, allow_unicode=True, sort_keys=False), encoding="utf-8"
-            )
-            print(
-                "Version 1 backed up and migrated. Previous ask policies were preserved; "
-                "set salary/work_authorization to infer if desired. Review the new instructions."
-            )
     links = root / "links.txt"
     if not links.exists():
         links.write_text("# One job listing or application URL per line.\n", encoding="utf-8")
@@ -150,7 +123,7 @@ def run(args, settings):
                     context = browser.new_context(accept_downloads=False, service_workers="block")
                     contexts.append(context)
                     session = BrowserSession(context, guard, settings)
-                    session.open(url, initial=True)
+                    session.open(url)
                     agent = ApplicationAgent(
                         session, client, settings, url, private, artifacts, args.interactive
                     )
@@ -196,10 +169,7 @@ def main():
     parser = argparse.ArgumentParser(description="Docker-first Claude job-application agent")
     parser.add_argument("--config", type=Path, default=Path("private/instructions.yaml"))
     sub = parser.add_subparsers(dest="command", required=True)
-    init = sub.add_parser("init", help="Create personal instructions; never touches API secrets")
-    init.add_argument(
-        "--upgrade", action="store_true", help="Back up and migrate version 1 instructions"
-    )
+    sub.add_parser("init", help="Create missing personal files; preserve existing instructions")
     sub.add_parser("validate", help="Validate configuration without printing private facts")
     for command in ("run", "self-test"):
         cmd = sub.add_parser(command)
@@ -217,7 +187,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "init":
-            initialize(args.upgrade)
+            initialize()
             return 0
         settings = (
             demo_settings()

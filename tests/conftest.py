@@ -29,7 +29,7 @@ def application(chromium, tmp_path):
         with demo_server(pages) as url:
             context = chromium.new_context(accept_downloads=False, service_workers="block")
             session = BrowserSession(context, NetworkGuard(url, config, demo=True), config)
-            session.open(url, initial=True)
+            session.open(url)
             agent = ApplicationAgent(
                 session,
                 ScriptedDemoClient(),

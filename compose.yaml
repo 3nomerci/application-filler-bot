@@ -65,7 +65,7 @@ services:
     profiles: [tools]
     ports: []
     volumes: ["./private:/app/private:rw"]
-    command: ["init", "--upgrade"]
+    command: ["init"]
     # Initialization alone needs a writable private mount. Agent/demo keep it read-only.
 
   test:
