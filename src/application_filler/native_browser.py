@@ -38,7 +38,9 @@ disabled. find ranks rendered labels and control types; rephrase if no match. El
 survive re-reads but not replaced elements/navigation. After an empty page, wait a few seconds
 and inspect/screenshot before declaring it unavailable. Recover within a reasonable call budget.
 Use browser.form_input for ordinary fields. answer_fields remains an optional shortcut to copy
-profile keys and is required for research-backed salary/visa answers and explicit field approvals.
+profile keys and carries research evidence for inferred salary/visa answers. Native browser tools
+automatically use saved user approval for the exact control/value; no extra approval argument
+is needed.
 Use browser.type for focused text and browser.key for dropdowns and date widgets. Browser clicks
 on submit buttons and Enter in forms are guarded: use submit_application for final submission.
 Browser file_upload accepts document_ids=['cv'] or ['cover_letter'] only; no filesystem paths.
@@ -189,10 +191,22 @@ class NativeBrowser:
         text = " ".join(target.metadata[k] for k in ("label", "group", "name")).casefold()
         categories = [key for key, pattern in TOPICS.items() if re.search(pattern, text)]
         category = categories[0] if categories else "general"
-        if category in {"salary", "work_authorization"}:
-            raise BrowserError("Use answer_fields with source or research evidence for this field")
         if type(value) in {int, float}:
             value = str(value)
+        approval = self.agent.approval_for(ref, value)
+        if approval is not None:
+            return self.agent.answer(
+                Answer(
+                    ref=ref,
+                    value=value,
+                    category=category,
+                    basis="user",
+                    reason="Apply the user's approved choice",
+                    approval_id=approval,
+                )
+            )
+        if category in {"salary", "work_authorization"}:
+            raise BrowserError("Use answer_fields with source or research evidence for this field")
 
         # Exact facts can pass review mode without the model recreating source annotations.
         def facts(node, prefix=""):
@@ -226,6 +240,13 @@ class NativeBrowser:
         if self.browser.is_submission(target):
             raise BrowserError("Use submit_application for final or ambiguous submit controls")
         meta = target.metadata
+        if meta["kind"] in {"checkbox", "radio", "option"}:
+            value = (
+                not bool(meta["checked"] in {True, "true"}) if meta["kind"] == "checkbox" else True
+            )
+            # All answer controls share the fill policy. Do not consume consent
+            # approval here before fill has had a chance to use it successfully.
+            return self.fill(ref, value)
         label = (meta["label"] + " " + meta["group"]).casefold()
         # Cookie consent buttons are actions too, not just checkbox fields.
         if re.search(r"\b(accept|allow|agree|consent|accetta)\b", label):
@@ -237,25 +258,12 @@ class NativeBrowser:
                 not cookie_permission
                 and self.agent.settings.answers.topics.get("consent", "ask") != "infer"
             ):
-                identity = self.agent.identity(ref)
-                approval = next(
-                    (
-                        key
-                        for key, value in self.agent.approvals.items()
-                        if value == (identity, True)
-                    ),
-                    None,
-                )
+                approval = self.agent.approval_for(ref, True)
                 if approval is None:
                     raise BrowserError(
                         "Use request_input with this ref and proposed_value=true, then retry click"
                     )
                 self.agent.approvals.pop(approval)
-        if meta["kind"] in {"checkbox", "radio", "option"}:
-            value = (
-                not bool(meta["checked"] in {True, "true"}) if meta["kind"] == "checkbox" else True
-            )
-            return self.fill(ref, value)
         return None
 
     def is_cookie_control(self, ref):

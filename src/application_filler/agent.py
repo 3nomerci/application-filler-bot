@@ -49,6 +49,11 @@ perform final submission. Prefer small batches of stable actions.
 For an unspecified role on a general application form, prefer its Free/Open Application option.
 Do not invent missing qualifications or personal preferences. Complete independent fields before
 asking about a missing answer, unless permission or the intended employer is unclear.
+Request one decision per request_input call. For a form answer or consent, provide the exact ref
+and proposed_value. Ask about each checkbox separately; never bundle required and optional consents
+or unrelated job notes into one approval. For checkboxes true means check and false means uncheck.
+An approved field/value can be applied with native browser tools or answer_fields with approval_id.
+Use requests without a ref only for missing context or manual browser help, not consent approvals.
 
 Work authorization: establish the actual work country, not just company HQ or a broad region.
 Use only explicitly supplied citizenships and existing immigration/work statuses. Never infer
@@ -116,9 +121,14 @@ class AnswerFields(StrictModel):
 
 
 class RequestInput(StrictModel):
-    question: str
-    ref: str | None = None
-    proposed_value: str | bool | None = None
+    question: str = Field(description="One question only; no bundled decisions or unrelated notes.")
+    ref: str | None = Field(
+        default=None, description="Exact control ref for a field/consent approval."
+    )
+    proposed_value: str | bool | None = Field(
+        default=None,
+        description="One proposed answer. For a checkbox: true=check, false=uncheck. Requires ref.",
+    )
 
 
 class CreateLetter(StrictModel):
@@ -248,7 +258,20 @@ class ApplicationAgent:
 
     def identity(self, ref):
         t = self.browser.target(ref)
-        return (t.frame_url, t.metadata["name"], t.metadata["label"], t.metadata["group"])
+        return (ref, t.frame_url, t.metadata["name"], t.metadata["label"], t.metadata["group"])
+
+    def approval_for(self, ref, value):
+        identity = self.identity(ref)
+        return next(
+            (
+                token
+                for token, (field, approved_value) in self.approvals.items()
+                if field == identity
+                and type(approved_value) is type(value)
+                and approved_value == value
+            ),
+            None,
+        )
 
     def prompt(self) -> str:
         from .native_browser import GUIDANCE
@@ -268,7 +291,15 @@ class ApplicationAgent:
     def approve(self, question: str) -> bool:
         if not self.interactive:
             return False
-        return self.ask(question + " [y/N] ").strip().lower() == "y"
+        while True:
+            reply = self.ask(question + " [y/yes, n/no; Enter=no, /quit=stop]: ").strip().casefold()
+            if reply == "/quit":
+                raise KeyboardInterrupt
+            if reply in {"y", "yes"}:
+                return True
+            if reply in {"", "n", "no"}:
+                return False
+            print("Please answer this one decision with yes or no, or /quit to stop.")
 
     def answer(self, answer: Answer):
         target = self.browser.target(answer.ref)
@@ -452,6 +483,10 @@ class ApplicationAgent:
                 )
             return {"results": results, "page": self.browser.inspect()}
         elif name == "request_input":
+            if args.proposed_value is not None and not args.ref:
+                raise BrowserError(
+                    "A proposed answer needs its exact field ref; ask one decision at a time"
+                )
             if not self.interactive:
                 self.done = True
                 self.report.update(
@@ -461,26 +496,93 @@ class ApplicationAgent:
             question = "".join(c for c in args.question if c.isprintable() or c == "\n")
             if args.ref:
                 target = self.browser.target(args.ref)
+                identity = self.identity(args.ref)
+                # A new decision supersedes any earlier unused approval for this field.
+                self.approvals = {
+                    token: decision
+                    for token, decision in self.approvals.items()
+                    if decision[0] != identity
+                }
+                boolean = target.metadata["kind"] in {"checkbox", "radio", "option"}
+                if boolean:
+                    # Show the actual control, not a model-written paragraph that might
+                    # bundle several consents into a single yes/no question.
+                    label = target.metadata["label"] or target.metadata["name"] or args.ref
+                    group = target.metadata["group"]
+                    label = "".join(c for c in label if c.isprintable() or c == "\n")
+                    group = "".join(c for c in group if c.isprintable() or c == "\n")
+                    kind = "Checkbox" if target.metadata["kind"] == "checkbox" else "Option"
+                    required = " (required)" if target.metadata["required"] else ""
+                    question = f"{kind}{required}: {label}"
+                    if group and group != label:
+                        question += f"\nGroup: {group}"
                 if args.proposed_value is not None:
-                    if not self.approve(question + f" Proposed answer: {args.proposed_value}"):
-                        self.unresolved.add(str(self.identity(args.ref)))
-                        return {"answer": None, "instruction": "Ask for an alternative or defer"}
+                    if boolean and type(args.proposed_value) is not bool:
+                        raise BrowserError("For this control propose a boolean: true or false")
+                    if boolean:
+                        action = "Check" if target.metadata["kind"] == "checkbox" else "Select"
+                        if not args.proposed_value:
+                            action = (
+                                "Uncheck" if target.metadata["kind"] == "checkbox" else "Deselect"
+                            )
+                        proposal = f"\nProposed choice: {action} this {kind.lower()}."
+                    else:
+                        proposal = f"\nProposed answer: {args.proposed_value}"
+                    if not self.approve(question + proposal + "\nApprove this choice only?"):
+                        self.unresolved.add(str(identity))
+                        return {
+                            "answer": None,
+                            "instruction": "The proposed choice was declined. "
+                            "Leave this field unchanged; do not infer approval for another choice.",
+                        }
                     value = args.proposed_value
                 else:
-                    value = self.ask(question + " (blank skips, /quit stops): ")
+                    prompt = (
+                        (
+                            "\nChoose yes=checked/selected or no=unchecked/unselected; "
+                            "Enter=skip, /quit=stop: "
+                        )
+                        if boolean
+                        else " (blank skips, /quit stops): "
+                    )
+                    while True:
+                        value = self.ask(question + prompt)
+                        if not boolean or value.strip().casefold() in {
+                            "",
+                            "/quit",
+                            "y",
+                            "yes",
+                            "true",
+                            "n",
+                            "no",
+                            "false",
+                        }:
+                            break
+                        print("Please answer this one control with yes or no, or Enter to skip.")
+                    if boolean:
+                        value = value.strip().casefold()
                 if value == "/quit":
                     raise KeyboardInterrupt
                 if value == "":
                     self.unresolved.add(str(self.identity(args.ref)))
                     return {"answer": None, "instruction": "Leave this field unresolved"}
-                if target.metadata["kind"] in {"checkbox", "radio", "option"}:
-                    if type(value) is not bool and value.casefold() not in {"true", "false"}:
-                        raise BrowserError("For this control ask for true or false")
+                if boolean:
                     if type(value) is not bool:
-                        value = value.casefold() == "true"
+                        value = value in {"y", "yes", "true"}
+                if self.identity(args.ref) != identity:
+                    raise BrowserError(
+                        "Question changed while awaiting approval; inspect and ask again"
+                    )
                 token = uuid.uuid4().hex
-                self.approvals[token] = (self.identity(args.ref), value)
-                return {"answer": value, "approval_id": token}
+                self.approvals[token] = (identity, value)
+                return {
+                    "answer": value,
+                    "approval_id": token,
+                    "ref": args.ref,
+                    "instruction": "Approval applies only to this control and value. "
+                    "Use browser.form_input or answer_fields to apply it; "
+                    "other consents need separate decisions.",
+                }
             if not self.approve(question + " Complete any browser step, then continue?"):
                 self.done = True
                 self.report.update(status="blocked", reason="user_declined_or_deferred")

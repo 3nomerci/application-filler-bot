@@ -195,6 +195,13 @@ With the default `submission: manual`, review and submit in this browser **befor
 pressing Enter to close the run**. Closing the container discards forms and logins.
 The tool does not save sessions for resuming later. Reports are saved in `artifacts/`.
 
+Each checkbox approval shows one actual checkbox label and a proposed **Check** or
+**Uncheck** choice. Answer `y` or `yes` to approve that choice only; `n`, `no` or
+Enter declines it and leaves the field unchanged. Use `/quit` to stop. Required
+privacy consent and optional future-job contact consent are separate decisions.
+Your approval follows that exact field and value through the browser tools; it does
+not authorize other checkboxes or final submission.
+
 To practice with the real model on fictional forms (**uses credits**, including a
 local fake submission):
 
