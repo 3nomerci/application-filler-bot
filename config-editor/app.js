@@ -20,6 +20,8 @@
     openHelp: null,
     cvFile: null,
     cvPending: false,
+    languageRows: null,
+    languageDraftDirty: false,
     savedSource: window.CONFIG_TEMPLATE
   };
 
@@ -124,6 +126,19 @@
   }
 
   // Validate against JSON Schema generated from the bot's strict Pydantic models.
+  function languageErrors(rows) {
+    const errors = [];
+    const names = new Set();
+    rows.forEach(({ language, level }, index) => {
+      const name = language.trim();
+      if (!name) errors.push(`Language ${index + 1}: enter a language name or remove this row.`);
+      if (!level.trim()) errors.push(`Language ${index + 1}: enter a proficiency level or remove this row.`);
+      if (name && names.has(name.toLowerCase())) errors.push('Language skills: each language can appear only once.');
+      names.add(name.toLowerCase());
+    });
+    return errors;
+  }
+
   function contractErrors(value, definition, path = '', doc = null) {
     definition = resolveDefinition(definition);
     const label = fieldByPath.get(path)?.label || path || 'Configuration';
@@ -206,6 +221,21 @@
     catch { errors.push('Invalid or excessive references between settings.'); return { errors, warnings }; }
     errors.push(...contractErrors(data, window.CONFIG_CONTRACT, '', doc));
     if (errors.length) return { errors, warnings };
+    const languages = data.candidate?.languages;
+    if (languages != null && (typeof languages !== 'object' || Array.isArray(languages)
+        || languages instanceof Date || languages instanceof Map || languages instanceof Set
+        || Object.values(languages).some((level) => typeof level !== 'string'))) {
+      errors.push('Language skills: supply a language name and text proficiency level for each entry.');
+    } else {
+      const rows = state.languageRows ?? Object.entries(languages || {}).map(([language, level]) => ({ language, level }));
+      errors.push(...languageErrors(rows));
+    }
+    if (data.candidate?.gender != null && typeof data.candidate.gender !== 'string') {
+      errors.push('Gender: enter your own wording or leave it blank.');
+    }
+    if (data.candidate?.veteran_status != null && typeof data.candidate.veteran_status !== 'boolean') {
+      errors.push('Veteran status: choose Veteran, Not a veteran or Unknown.');
+    }
     for (const field of fieldDefinitions) {
       const value = valueAt(field.path, source);
       if (field.type === 'email' && value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value))) {
@@ -281,7 +311,7 @@
 
   function refreshHeader() {
     $('#file-name').textContent = state.filename;
-    $('#dirty-indicator').hidden = !state.dirty;
+    $('#dirty-indicator').hidden = !state.dirty && !state.languageDraftDirty;
   }
 
   function renderNav() {
@@ -299,6 +329,10 @@
 
   function switchSection(id) {
     if (!schema.some((section) => section.id === id)) return;
+    if (id === 'raw' && state.languageDraftDirty) {
+      toast('Complete or remove unfinished language rows before opening the file editor.');
+      return;
+    }
     if (id !== 'raw' && state.section === 'raw' && !updateNotices()) {
       toast('Fix the highlighted issues before returning to the form.');
       return;
@@ -312,6 +346,7 @@
     const value = field.type === 'tags' || field.type === 'examples' ? listAt(field.path) : valueAt(field.path);
     const id = `field-${field.path.replaceAll('.', '-')}`;
 
+    if (field.type === 'languages') return makeLanguagesControl(field, value, id);
     if (field.type === 'relocation') return makeRelocationControl(field, value, id);
 
     if (field.type === 'examples') {
@@ -377,6 +412,82 @@
     control.setAttribute('aria-describedby', `${id}-description`);
     if (field.path === 'model.id') control.readOnly = true;
     return field.path === 'documents.cv' ? makeCVControl(control) : control;
+  }
+
+  function makeLanguagesControl(field, value, id) {
+    if (state.languageRows === null) {
+      state.languageRows = Object.entries(value || {}).map(([language, level]) => ({ language, level }));
+    }
+    const wrapper = el('div', 'languages-list');
+    wrapper.id = id;
+    wrapper.setAttribute('role', 'group');
+    wrapper.setAttribute('aria-label', field.label);
+    wrapper.setAttribute('aria-describedby', `${id}-description`);
+
+    function commit() {
+      state.languageDraftDirty = true;
+      if (!languageErrors(state.languageRows).length) {
+        const languages = Object.fromEntries(state.languageRows.map(({ language, level }) => [language.trim(), level.trim()]));
+        try {
+          replaceField(field.path, languages);
+          state.languageDraftDirty = false;
+        } catch (error) { toast(error.message); }
+      }
+      refreshHeader();
+      updateNotices();
+    }
+
+    state.languageRows.forEach((row, index) => {
+      const item = el('div', 'language-row');
+      const nameId = `${id}-name-${index}`;
+      const levelId = `${id}-level-${index}`;
+      const nameLabel = el('label', 'language-label', 'Language');
+      nameLabel.htmlFor = nameId;
+      const name = el('input', 'field-input');
+      name.id = nameId;
+      name.type = 'text';
+      name.placeholder = field.placeholder;
+      name.value = row.language;
+      name.setAttribute('aria-label', `Language ${index + 1}`);
+      name.dataset.languageName = String(index);
+      name.addEventListener('input', () => { row.language = name.value; commit(); });
+      const nameGroup = el('div', 'language-cell');
+      nameGroup.append(nameLabel, name);
+
+      const levelLabel = el('label', 'language-label', 'Proficiency');
+      levelLabel.htmlFor = levelId;
+      const level = el('input', 'field-input');
+      level.id = levelId;
+      level.type = 'text';
+      level.placeholder = field.levelPlaceholder;
+      level.value = row.level;
+      level.setAttribute('aria-label', `Proficiency ${index + 1}`);
+      level.addEventListener('input', () => { row.level = level.value; commit(); });
+      const levelGroup = el('div', 'language-cell');
+      levelGroup.append(levelLabel, level);
+
+      const remove = el('button', 'small-button', 'Remove');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', `Remove language ${index + 1}`);
+      remove.addEventListener('click', () => {
+        state.languageRows.splice(index, 1);
+        commit();
+        render();
+      });
+      item.append(nameGroup, levelGroup, remove);
+      wrapper.append(item);
+    });
+    if (!state.languageRows.length) wrapper.append(el('p', 'field-caption', 'No languages supplied. Add only those you want the agent to use.'));
+    const add = el('button', 'small-button add-language', '+ Add language');
+    add.type = 'button';
+    add.addEventListener('click', () => {
+      state.languageRows.push({ language: '', level: '' });
+      commit();
+      render();
+      document.querySelector('.language-row:last-of-type [data-language-name]')?.focus();
+    });
+    wrapper.append(add);
+    return wrapper;
   }
 
   function makeRelocationControl(field, value, id) {
@@ -623,6 +734,8 @@
     source = source.replace(/^\uFEFF/, '');
     const previous = { ...state };
     state.source = source;
+    state.languageRows = null;
+    state.languageDraftDirty = false;
     const result = preflight();
     if (result.errors.length) {
       Object.assign(state, previous);
@@ -641,7 +754,7 @@
   }
 
   async function openFile() {
-    if ((state.dirty || state.cvPending) && !window.confirm('Discard unsaved changes and open another file?')) return;
+    if ((state.dirty || state.cvPending || state.languageDraftDirty) && !window.confirm('Discard unsaved changes and open another file?')) return;
     if (typeof window.showOpenFilePicker === 'function') {
       try {
         const [handle] = await window.showOpenFilePicker({
@@ -709,9 +822,11 @@
   // --- Lifecycle -----------------------------------------------------------
 
   $('#new-button').addEventListener('click', () => {
-    if ((state.dirty || state.cvPending) && !window.confirm('Discard unsaved changes and start a new configuration?')) return;
+    if ((state.dirty || state.cvPending || state.languageDraftDirty) && !window.confirm('Discard unsaved changes and start a new configuration?')) return;
     state.cvFile = null;
     state.cvPending = false;
+    state.languageRows = null;
+    state.languageDraftDirty = false;
     state.source = window.CONFIG_TEMPLATE;
     state.filename = 'instructions.yaml';
     state.fileHandle = null;
@@ -736,12 +851,14 @@
   $('#save-folder-button').addEventListener('click', savePrivateFolder);
   $('#raw-text').addEventListener('input', (event) => {
     state.source = event.target.value;
+    state.languageRows = null;
+    state.languageDraftDirty = false;
     state.dirty = state.source !== state.savedSource;
     refreshHeader();
     updateNotices();
   });
   window.addEventListener('beforeunload', (event) => {
-    if (!state.dirty && !state.cvPending) return;
+    if (!state.dirty && !state.cvPending && !state.languageDraftDirty) return;
     event.preventDefault();
     event.returnValue = '';
   });

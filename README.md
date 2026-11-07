@@ -181,6 +181,49 @@ To always ask about salary, change the existing `answers.topics.salary` value to
 a declaration, describe precisely what you accept under `instructions` and change
 the appropriate topic policy. Trust permits supported inference, not invented facts.
 
+### Consent and required-only personal disclosures
+
+You can preauthorize application-processing consent and use supplied personal facts
+only when a question is required. Merge the following into your existing private
+configuration; keep your other facts and instructions. These facts are an example:
+use only values that are true for you.
+
+```yaml
+candidate:
+  gender: "Man"
+  veteran: false
+  marital_status: "Not married"
+
+answers:
+  mode: trusted
+  topics:
+    work_authorization: infer
+    salary: infer
+    consent: infer
+    personal_disclosure: infer
+
+instructions: >-
+  I authorize consent to processing my application and personal data for this
+  recruitment process. Leave optional marketing, future-job contact and talent-pool
+  consents unticked or unanswered. If a choice is required, decline those optional
+  uses. Ask about declarations outside this scope or claims not supported by my facts.
+  Answer required personal-disclosure questions using only my supplied facts.
+  Leave optional personal-disclosure questions unanswered. If an optional question
+  cannot be left empty, choose Prefer not to say when available. Ask when a required
+  answer is missing or ambiguous. Do not infer other personal statuses.
+```
+
+`infer` lets the agent follow those instructions and map your facts to the website's
+wording. `ask` would still require approval even with facts supplied; `skip` skips
+the entire topic, including required questions. Required-only disclosure is expressed
+in `instructions`, not by setting the whole topic to `skip`. Employment protected-category
+questions still follow the separate `answers.protected_category` rule.
+
+In the guided editor, set the topic policies and general instructions, then use
+**Advanced file editor** to add extra facts under `candidate`. Supply language levels
+and specific relocation preferences there too, so the agent need not ask each time.
+Keep unknown facts absent rather than assuming negative answers.
+
 ## 3. Add your API key and job links
 
 Real runs require an Anthropic API account with credits and access to the pinned
@@ -233,6 +276,10 @@ Enter declines it and leaves the field unchanged. Use `/quit` to stop. Required
 privacy consent and optional future-job contact consent are separate decisions.
 Your approval follows that exact field and value through the browser tools; it does
 not authorize other checkboxes or final submission.
+Declining or skipping an optional answer does not itself block submission; required
+or invalid fields still do. When asked to complete a browser step, make your edits
+in the container's browser and then answer `yes` in the terminal. Browser network
+requests remain active while the terminal waits, including during final review.
 
 To practice with the real model on fictional forms (**uses credits**, including a
 local fake submission):
@@ -246,6 +293,14 @@ reports and the batch continues. Add `--headless` to hide the browser. Set
 `submission: auto` explicitly if you want final submission without review; otherwise
 filled forms disappear when a headless run ends. The agent records submission
 attempts to avoid automatically retrying uncertain submissions.
+
+The report's status tells you what happened: **`submitted_confirmed`** means the agent
+clicked Submit and observed a new acceptance message; **`blocked`** means it did not
+submit; **`submission_unverified`** means it attempted submission but could not verify
+acceptance. Do not infer success just because the batch moved to the next link.
+An email may arrive later or not at all. Automatic mode still stops for missing facts,
+required consent or a login. A failure in local pre-submission checks does not consume
+the one submission attempt; an actual attempted submission is never retried automatically.
 
 When finished:
 

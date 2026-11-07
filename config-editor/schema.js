@@ -37,9 +37,27 @@
         }),
         field('candidate.relocation', 'Relocation preference', 'relocation', 'Choose whether you would move for a job, or describe where you would move.', { placeholder: 'Open to relocating within the EU' }),
         field('candidate.start_date', 'Availability / start date', 'text', 'Describe when you could start work.', { placeholder: 'Immediately, or after a two-month notice period' }),
+        field('candidate.gender', 'Gender', 'nullable', 'Optional. Enter the wording you use for your gender, or leave blank.', {
+          placeholder: 'Man',
+          help: 'This supplies a fact for gender questions. It does not establish your pronouns or an answer to a different question about legal sex. The Personal disclosures policy in Agent behavior still decides whether the bot asks, uses supplied facts or skips the question.'
+        }),
+        field('candidate.veteran_status', 'Veteran status', 'select', 'Your military veteran status. Leave Unknown selected when you have not supplied this fact.', {
+          choices: [['null', 'Unknown / not supplied'], ['true', 'Veteran'], ['false', 'Not a veteran']], nullableBoolean: true,
+          help: 'Not a veteran is an explicit negative answer; Unknown is missing information. Employer questions may use a narrower definition, such as a specific protected-veteran category. The bot should read that definition and ask if your supplied fact is insufficient. The Personal disclosures policy still applies.'
+        }),
         field('candidate.protected_category_member', 'Protected-category membership', 'select', 'Choose Unknown if you are unsure whether the employment category applies to you.', {
           choices: [['null', 'Unknown / ask me'], ['true', 'Yes'], ['false', 'No']], nullableBoolean: true,
           help: 'Some countries have legally defined employment categories, such as Italy’s categorie protette. This fact works with the protected-category policy in Agent behavior; other demographic and disability questions follow the personal-disclosure policy.'
+        })
+      ]
+    },
+    {
+      id: 'languages', title: 'Languages', eyebrow: 'PROFILE',
+      description: 'The languages you can use and your proficiency in each.',
+      fields: [
+        field('candidate.languages', 'Language skills', 'languages', 'Add one language per row and describe your level. Enter plain text in both fields.', {
+          placeholder: 'English', levelPlaceholder: 'C1 / fluent', wide: true,
+          help: 'Use a level you can support: for example C1 / fluent, Native or Beginner. The bot reads each language and level as a supplied fact, then matches the application’s wording and options. It should ask when it cannot establish a suitable answer; a self-reported level does not imply a formal certificate.'
         })
       ]
     },
@@ -244,6 +262,14 @@ candidate:
   start_date: ""
   date_of_birth: null # Quoted ISO date, e.g. "2000-12-31"; never infer a missing date.
   protected_category_member: null # Explicit false -> No; true -> skip; null -> ask.
+  languages: {} # Map each language to your own proficiency; leave empty if not supplied.
+  # Example shape (replace with your own facts):
+  # languages:
+  #   English: "B2 / upper-intermediate"
+  #   French: "Beginner"
+  gender: null # Optional self-described gender, e.g. "Man", "Woman" or your own wording.
+  veteran_status: null # true: veteran; false: not a veteran; null: not supplied.
+  # Gender/veteran answers still follow answers.topics.personal_disclosure (ask/infer/skip).
   education:
     bachelors:
       institution: ""

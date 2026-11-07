@@ -1,16 +1,46 @@
 import ipaddress
 import re
 import socket
+from concurrent.futures import Future
 from dataclasses import dataclass
+from threading import Thread
 from urllib.parse import urlsplit
 
 from playwright.sync_api import BrowserContext, ElementHandle, Page
+from playwright.sync_api import Error as PlaywrightError
 
 from .config import Settings
 
 
 class BrowserError(RuntimeError):
     pass
+
+
+def browser_input(browser, question: str, ask=input):
+    """Keep Playwright's routed requests moving while terminal input waits.
+
+    Only input runs in the worker; all Playwright calls stay on their owning thread.
+    Pumping one page services events for every context, including earlier applications.
+    """
+    result = Future()
+
+    def read():
+        try:
+            result.set_result(ask(question))
+        except BaseException as exc:
+            result.set_exception(exc)
+
+    Thread(target=read, daemon=True).start()
+    while not result.done():
+        pages = [p for c in browser.contexts for p in c.pages if not p.is_closed()]
+        if not pages:
+            raise BrowserError("No browser tabs remain open for interactive review")
+        try:
+            pages[-1].wait_for_timeout(100)
+        except PlaywrightError:
+            if not pages[-1].is_closed():
+                raise
+    return result.result()
 
 
 def public_url(url: str) -> str:

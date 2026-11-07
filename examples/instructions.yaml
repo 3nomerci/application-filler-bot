@@ -18,6 +18,14 @@ candidate:
   start_date: ""
   date_of_birth: null # Quoted ISO date, e.g. "2000-12-31"; never infer a missing date.
   protected_category_member: null # Explicit false -> No; true -> skip; null -> ask.
+  languages: {} # Map each language to your own proficiency; leave empty if not supplied.
+  # Example shape (replace with your own facts):
+  # languages:
+  #   English: "B2 / upper-intermediate"
+  #   French: "Beginner"
+  gender: null # Optional self-described gender, e.g. "Man", "Woman" or your own wording.
+  veteran_status: null # true: veteran; false: not a veteran; null: not supplied.
+  # Gender/veteran answers still follow answers.topics.personal_disclosure (ask/infer/skip).
   education:
     bachelors:
       institution: ""

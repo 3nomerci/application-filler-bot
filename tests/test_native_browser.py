@@ -179,6 +179,7 @@ def test_completion_ignores_unrelated_newsletter_form(application):
     <form><label>Newsletter email<input type=email required></label>
     <button>Subscribe</button></form>"""
     with application({"/": html}) as a:
+        a.settings.submission = "manual"
         a.native.execute("form_input", field(reference(a, "Name"), "Alex Example"))
         a.complete(
             Complete(

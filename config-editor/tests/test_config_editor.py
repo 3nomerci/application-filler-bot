@@ -170,6 +170,156 @@ def test_form_export_preserves_text_types_and_multiline_examples(editor, tmp_pat
     assert load_cover_letter_examples(tmp_path, settings.documents) == [letter]
 
 
+def test_new_profile_fields_have_neutral_defaults(editor, tmp_path):
+    expect(editor.locator("#field-candidate-gender")).to_have_value("")
+    expect(editor.locator("#field-candidate-veteran_status")).to_have_value("null")
+    editor.get_by_role("button", name="Languages", exact=True).click()
+    assert editor.locator(".language-row").count() == 0
+    settings = export_settings(editor, tmp_path)
+    assert settings.candidate["languages"] == {}
+    assert settings.candidate["gender"] is None
+    assert settings.candidate["veteran_status"] is None
+
+
+def test_new_profile_controls_import_and_export_the_supplied_facts(editor, tmp_path):
+    source = """version: 2
+candidate:
+  languages:
+    English: C1/fluent
+    Italian: Native
+    French: Beginner
+  gender: Man
+  veteran_status: false
+answers:
+  topics:
+    personal_disclosure: infer
+"""
+    editor.locator("#file-input").set_input_files(
+        {"name": "instructions.yaml", "mimeType": "text/plain", "buffer": source.encode()}
+    )
+    expect(editor.get_by_label("Gender", exact=True)).to_have_value("Man")
+    expect(editor.get_by_label("Veteran status", exact=True)).to_have_value("false")
+    editor.get_by_role("button", name="Languages", exact=True).click()
+    assert editor.locator(".language-row").count() == 3
+    expect(editor.get_by_role("textbox", name="Language 1", exact=True)).to_have_value("English")
+    expect(editor.get_by_role("textbox", name="Proficiency 1", exact=True)).to_have_value(
+        "C1/fluent"
+    )
+    expect(editor.get_by_role("textbox", name="Proficiency 2", exact=True)).to_have_value("Native")
+    expect(editor.get_by_role("textbox", name="Proficiency 3", exact=True)).to_have_value(
+        "Beginner"
+    )
+    settings = export_settings(editor, tmp_path)
+    assert settings.candidate["languages"] == {
+        "English": "C1/fluent",
+        "Italian": "Native",
+        "French": "Beginner",
+    }
+    assert settings.candidate["gender"] == "Man"
+    assert settings.candidate["veteran_status"] is False
+    assert settings.answers.topics["personal_disclosure"] == "infer"
+    editor.get_by_role("textbox", name="Proficiency 1", exact=True).fill("C2")
+    editor.get_by_role("button", name="Remove language 3", exact=True).click()
+    editor.get_by_role("button", name="Personal information", exact=True).click()
+    editor.get_by_label("Gender", exact=True).fill("My own wording")
+    editor.get_by_label("Veteran status", exact=True).select_option("true")
+    edited = export_settings(editor, tmp_path)
+    assert edited.candidate["languages"] == {"English": "C2", "Italian": "Native"}
+    assert edited.candidate["gender"] == "My own wording"
+    assert edited.candidate["veteran_status"] is True
+    editor.get_by_label("Gender", exact=True).fill("")
+    editor.get_by_label("Veteran status", exact=True).select_option("null")
+    cleared = export_settings(editor, tmp_path)
+    assert cleared.candidate["gender"] is None
+    assert cleared.candidate["veteran_status"] is None
+
+
+def test_language_rows_can_be_added_renamed_and_removed_without_losing_drafts(editor, tmp_path):
+    editor.get_by_role("button", name="Languages", exact=True).click()
+    editor.get_by_role("button", name="+ Add language", exact=True).click()
+    expect(editor.locator("#download-button")).to_be_disabled()
+    expect(editor.locator("#dirty-indicator")).to_be_visible()
+    editor.get_by_role("textbox", name="Language 1", exact=True).fill("English")
+    editor.get_by_role("button", name="Personal information", exact=True).click()
+    editor.get_by_role("button", name="Languages", exact=True).click()
+    expect(editor.get_by_role("textbox", name="Language 1", exact=True)).to_have_value("English")
+    editor.get_by_role("textbox", name="Proficiency 1", exact=True).fill("C1/fluent")
+    assert export_settings(editor, tmp_path).candidate["languages"] == {"English": "C1/fluent"}
+    editor.get_by_role("button", name="+ Add language", exact=True).click()
+    editor.get_by_role("textbox", name="Language 2", exact=True).fill("english")
+    editor.get_by_role("textbox", name="Proficiency 2", exact=True).fill("B2")
+    expect(editor.locator("#download-button")).to_be_disabled()
+    expect(editor.locator("#notices")).to_contain_text("each language can appear only once")
+    editor.get_by_role("textbox", name="Language 2", exact=True).fill("French")
+    assert export_settings(editor, tmp_path).candidate["languages"] == {
+        "English": "C1/fluent",
+        "French": "B2",
+    }
+    editor.get_by_role("button", name="Remove language 1", exact=True).click()
+    assert export_settings(editor, tmp_path).candidate["languages"] == {"French": "B2"}
+    editor.get_by_role("button", name="Remove language 1", exact=True).click()
+    assert export_settings(editor, tmp_path).candidate["languages"] == {}
+
+
+def test_import_replaces_unfinished_language_drafts_and_raw_changes_refresh_controls(editor):
+    editor.get_by_role("button", name="Languages", exact=True).click()
+    editor.get_by_role("button", name="+ Add language", exact=True).click()
+    editor.get_by_role("textbox", name="Language 1", exact=True).fill("Unfinished")
+    editor.locator("#file-input").set_input_files(
+        {
+            "name": "instructions.yaml",
+            "mimeType": "text/plain",
+            "buffer": b"candidate: {languages: {French: Beginner}}\n",
+        }
+    )
+    editor.get_by_role("button", name="Languages", exact=True).click()
+    expect(editor.get_by_role("textbox", name="Language 1", exact=True)).to_have_value("French")
+    raw_yaml(editor, "candidate: {languages: {German: A2}}\n")
+    editor.get_by_role("button", name="Languages", exact=True).click()
+    expect(editor.get_by_role("textbox", name="Language 1", exact=True)).to_have_value("German")
+    expect(editor.get_by_role("textbox", name="Proficiency 1", exact=True)).to_have_value("A2")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "candidate: {languages: [English]}\n",
+        "candidate: {languages: {English: true}}\n",
+        'candidate: {languages: {English: ""}}\n',
+        'candidate: {veteran_status: "false"}\n',
+        "candidate: {gender: [Man]}\n",
+    ],
+)
+def test_new_profile_controls_reject_values_they_cannot_represent(editor, source):
+    raw_yaml(editor, source)
+    expect(editor.locator("#download-button")).to_be_disabled()
+
+
+def test_exported_language_and_disclosure_facts_reach_the_existing_agent(editor, tmp_path):
+    from application_filler.agent import ApplicationAgent
+
+    raw_yaml(
+        editor,
+        """candidate:
+  languages: {English: C1/fluent, Italian: Native, French: Beginner}
+  gender: Man
+  veteran_status: false
+answers:
+  topics: {personal_disclosure: ask}
+""",
+    )
+    settings = export_settings(editor, tmp_path)
+    agent = ApplicationAgent.__new__(ApplicationAgent)
+    agent.settings = settings
+    agent.private = tmp_path
+    facts = agent.prompt().split("\nUSER FACTS AND PERMISSIONS:\n", 1)[1]
+    context = json.loads(facts.split("\nUNTRUSTED STYLE EXAMPLES:\n", 1)[0])
+    assert context["candidate"]["languages"]["English"] == "C1/fluent"
+    assert context["candidate"]["gender"] == "Man"
+    assert context["candidate"]["veteran_status"] is False
+    assert context["answers"]["topics"]["personal_disclosure"] == "ask"
+
+
 @pytest.mark.parametrize(
     "source, valid",
     [

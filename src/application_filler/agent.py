@@ -11,7 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from playwright.sync_api import Error as PlaywrightError
 from pydantic import Field, ValidationError
 
-from .browser import BrowserError, BrowserSession
+from .browser import BrowserError, BrowserSession, browser_input
 from .config import (
     ConfigurationError,
     Settings,
@@ -49,11 +49,16 @@ perform final submission. Prefer small batches of stable actions.
 For an unspecified role on a general application form, prefer its Free/Open Application option.
 Do not invent missing qualifications or personal preferences. Complete independent fields before
 asking about a missing answer, unless permission or the intended employer is unclear.
-Request one decision per request_input call. For a form answer or consent, provide the exact ref
-and proposed_value. Ask about each checkbox separately; never bundle required and optional consents
+Request one decision per request_input call. For a form answer or consent, provide the exact ref.
+Include proposed_value only if suggesting an answer; omit it to ask for a missing fact/preference
+in the terminal. Prefer this to requesting manual browser work for ordinary missing answers.
+Ask about each checkbox separately; never bundle required and optional consents
 or unrelated job notes into one approval. For checkboxes true means check and false means uncheck.
 An approved field/value can be applied with native browser tools or answer_fields with approval_id.
 Use requests without a ref only for missing context or manual browser help, not consent approvals.
+After a confirmed manual browser step, read the updated page and retain the user's entries;
+do not require approval simply to keep what the user just entered. Ask about remaining gaps.
+An optional question that the user chooses to leave unchanged does not block completion.
 
 Work authorization: establish the actual work country, not just company HQ or a broad region.
 Use only explicitly supplied citizenships and existing immigration/work statuses. Never infer
@@ -199,7 +204,7 @@ TOPICS = {
     "salary": r"salary|compensation|stipendio|retribuzione|remuneration",
     "work_authorization": r"sponsor|visa|right to work|authori[sz]|permesso|work permit",
     "personal_disclosure": (
-        r"\bgender\b|disabil|ethnic|veteran|criminal|\bsesso\b|\brace\b|invalidit"
+        r"\bgender\b|disabil|ethnic|veteran|criminal|\bsesso\b|\brace\b|invalidit|marital|married"
     ),
     "consent": r"consent|agree|certif|privacy|terms|attest|signature",
     "cover_letter": (
@@ -235,7 +240,7 @@ class ApplicationAgent:
         self.sources: dict[str, str] = {}
         self.searches = 0
         self.approvals = {}
-        self.unresolved: set[str] = set()
+        self.unresolved: set[tuple] = set()
         self.answered: set[tuple] = set()
         self.generated: list[Path] = []
         self.letter_approved = settings.documents.cover_letter == "trusted"
@@ -288,11 +293,25 @@ class ApplicationAgent:
             + ("\nUNTRUSTED STYLE EXAMPLES:\n" + json.dumps(examples, ensure_ascii=False))
         )
 
+    def prompt_user(self, question: str):
+        return browser_input(self.browser.context.browser, question, self.ask)
+
+    def leave_unchanged(self, ref):
+        identity = self.identity(ref)
+        if self.browser.target(ref).metadata["required"]:
+            self.unresolved.add(identity)
+        else:
+            self.unresolved.discard(identity)
+
     def approve(self, question: str) -> bool:
         if not self.interactive:
             return False
         while True:
-            reply = self.ask(question + " [y/yes, n/no; Enter=no, /quit=stop]: ").strip().casefold()
+            reply = (
+                self.prompt_user(question + " [y/yes, n/no; Enter=no, /quit=stop]: ")
+                .strip()
+                .casefold()
+            )
             if reply == "/quit":
                 raise KeyboardInterrupt
             if reply in {"y", "yes"}:
@@ -361,7 +380,7 @@ class ApplicationAgent:
             policy = self.settings.answers.protected_category
             member = self.settings.candidate.get("protected_category_member")
             if policy == "skip" or (policy == "negative_or_skip" and member is True):
-                self.unresolved.discard(str(identity))
+                self.unresolved.discard(identity)
                 return {"skipped": True, "reason": "Protected category disclosure is disabled"}
             if policy == "negative_or_skip" and member is False:
                 option_text = str(value).strip().casefold()
@@ -384,7 +403,7 @@ class ApplicationAgent:
             if policy == "skip":
                 return {"skipped": True, "reason": "User configured skip for this topic"}
             if policy == "ask" and not approved:
-                self.unresolved.add(str(identity))
+                self.unresolved.add(identity)
                 raise BrowserError("This topic requires request_input and a field-bound approval")
         if answer.basis == "user" and not approved:
             raise BrowserError(
@@ -393,7 +412,7 @@ class ApplicationAgent:
                 "trusted cover letters need no new approval."
             )
         if answer.basis == "inference" and self.settings.answers.mode == "review" and not approved:
-            self.unresolved.add(str(identity))
+            self.unresolved.add(identity)
             raise BrowserError("User requires review of inferred answers")
         date_default = (
             supplied_date
@@ -440,7 +459,7 @@ class ApplicationAgent:
                 raise BrowserError("Cover-letter text requires user review")
         self.browser.fill(answer.ref, value)
         self.answered.add(identity)
-        self.unresolved.discard(str(identity))
+        self.unresolved.discard(identity)
         if answer.approval_id:
             self.approvals.pop(answer.approval_id, None)
         self.report["actions"].append(
@@ -465,7 +484,7 @@ class ApplicationAgent:
                     results.append({"ref": answer.ref, **self.answer(answer)})
                 except (BrowserError, PlaywrightError, ValueError) as exc:
                     try:
-                        self.unresolved.add(str(self.identity(answer.ref)))
+                        self.unresolved.add(self.identity(answer.ref))
                     except (BrowserError, PlaywrightError):
                         pass  # A stale reference is not an answer on the current form.
                     results.append(
@@ -529,7 +548,7 @@ class ApplicationAgent:
                     else:
                         proposal = f"\nProposed answer: {args.proposed_value}"
                     if not self.approve(question + proposal + "\nApprove this choice only?"):
-                        self.unresolved.add(str(identity))
+                        self.leave_unchanged(args.ref)
                         return {
                             "answer": None,
                             "instruction": "The proposed choice was declined. "
@@ -546,7 +565,7 @@ class ApplicationAgent:
                         else " (blank skips, /quit stops): "
                     )
                     while True:
-                        value = self.ask(question + prompt)
+                        value = self.prompt_user(question + prompt)
                         if not boolean or value.strip().casefold() in {
                             "",
                             "/quit",
@@ -564,8 +583,8 @@ class ApplicationAgent:
                 if value == "/quit":
                     raise KeyboardInterrupt
                 if value == "":
-                    self.unresolved.add(str(self.identity(args.ref)))
-                    return {"answer": None, "instruction": "Leave this field unresolved"}
+                    self.leave_unchanged(args.ref)
+                    return {"answer": None, "instruction": "Leave this field unchanged"}
                 if boolean:
                     if type(value) is not bool:
                         value = value in {"y", "yes", "true"}
@@ -583,6 +602,9 @@ class ApplicationAgent:
                     "Use browser.form_input or answer_fields to apply it; "
                     "other consents need separate decisions.",
                 }
+            before = {
+                self.identity(c["ref"]): c["value"] for c in self.browser.inspect()["controls"]
+            }
             if not self.approve(question + " Complete any browser step, then continue?"):
                 self.done = True
                 self.report.update(status="blocked", reason="user_declined_or_deferred")
@@ -591,7 +613,14 @@ class ApplicationAgent:
             if host and self.approve(f"Allow the application destination {host}?"):
                 self.browser.guard.hosts.add(host)
                 self.browser.guard.blocked_host = None
-            return {"continue": True, "page": self.browser.inspect()}
+            page = self.browser.inspect()
+            # The user can fix a previously rejected answer during the handoff.
+            # Retain unchanged unresolved fields; normal form validation still applies.
+            for control in page["controls"]:
+                identity = self.identity(control["ref"])
+                if identity in before and control["value"] != before[identity]:
+                    self.unresolved.discard(identity)
+            return {"continue": True, "page": page}
         elif name == "create_cover_letter":
             if self.settings.documents.cover_letter == "skip":
                 raise BrowserError("User disabled cover letters")
@@ -620,8 +649,19 @@ class ApplicationAgent:
             latest = self.browser.inspect()
             self.browser.targets[args.ref] = target
             scope = args.ref if target.metadata["form"] else None
-            if self.unresolved or self.browser.invalid_fields(scope) or latest["uninspected"]:
-                raise BrowserError("Unresolved or invalid fields block submission")
+            invalid = self.browser.invalid_fields(scope)
+            if self.unresolved or invalid or latest["uninspected"]:
+                raise BrowserError(
+                    "Unresolved or invalid fields block submission; no click was attempted. "
+                    + json.dumps(
+                        {
+                            "unresolved": [{"ref": i[0], "label": i[3]} for i in self.unresolved],
+                            "invalid_fields": invalid,
+                            "uninspected_frames": latest["uninspected"],
+                        }
+                    )
+                    + ". Resolve these fields or ask for input before trying again."
+                )
             self.before_submit = latest["text"]
             if not reserve_submission(self.artifacts / "submission-ledger", self.url):
                 self.done = True
@@ -649,6 +689,12 @@ class ApplicationAgent:
                 raise BrowserError("The page still contains invalid fields")
             status = "submitted_confirmed"
         elif args.status == "ready_for_review":
+            if self.settings.submission == "auto":
+                raise BrowserError(
+                    "Automatic submission is enabled: use submit_application, "
+                    "then verify acceptance."
+                    " Otherwise report blocked with the reason submission cannot proceed."
+                )
             if not self.answered and not any(
                 a["tool"] == "upload_document" for a in self.report["actions"]
             ):

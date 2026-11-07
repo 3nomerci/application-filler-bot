@@ -1,6 +1,7 @@
 import pytest
 from conftest import reference
 
+from application_filler.agent import Complete
 from application_filler.browser import BrowserError
 
 LABEL = "I agree to the Privacy Policy for processing this application"
@@ -178,3 +179,56 @@ def test_unbound_proposal_cannot_grant_consent(application):
         with pytest.raises(BrowserError, match="exact field ref"):
             a.execute("request_input", {"question": "Accept both?", "proposed_value": True})
         assert not a.approvals
+
+
+@pytest.mark.parametrize("required", [False, True])
+@pytest.mark.parametrize("kind", ["checkbox", "select"])
+@pytest.mark.parametrize("propose", [False, True])
+def test_skipping_optional_consent_allows_submission_but_required_still_blocks(
+    application, required, kind, propose
+):
+    requirement = "required" if required else ""
+    control = (
+        f"<input type=checkbox {requirement}>"
+        if kind == "checkbox"
+        else f"<select {requirement}><option value=''>Choose</option>"
+        "<option value=yes>Accept</option><option value=no>Decline</option></select>"
+    )
+    html = f"""<form onsubmit="event.preventDefault(); this.remove();
+      document.querySelector('output').textContent='Application received'">
+      <label>Talent database consent{control}</label>
+      <button>Submit application</button></form><output></output>"""
+    with application({"/": html}, interactive=True, ask=lambda _: "") as a:
+        a.settings.answers.topics["consent"] = "ask"
+        ref = reference(a, "Talent database consent")
+        value = True if kind == "checkbox" else "yes"
+        # An earlier rejected fill must not leave an optional consent stuck unresolved.
+        with pytest.raises(BrowserError, match="approval"):
+            fill(a, ref, value)
+        args = {"ref": ref, "question": "Consent?"}
+        if propose:
+            args["proposed_value"] = value
+        assert a.execute("request_input", args)["answer"] is None
+        button = reference(a, "Submit application")
+        if required:
+            with pytest.raises(BrowserError, match="Talent database consent"):
+                a.execute("submit_application", {"ref": button})
+            assert not a.attempted
+            assert not (a.artifacts / "submission-ledger").exists()
+        else:
+            assert not a.unresolved
+            a.execute("submit_application", {"ref": button})
+            a.complete(
+                Complete(
+                    status="submitted", reason="Accepted", confirmation_text="Application received"
+                )
+            )
+            assert a.report["status"] == "submitted_confirmed"
+
+
+def test_auto_cannot_finish_ready_without_submitting(application):
+    with application({"/": "<label>Name<input></label>"}) as a:
+        fill(a, reference(a, "Name"), "Alex Example")
+        with pytest.raises(BrowserError, match="Automatic submission"):
+            a.complete(Complete(status="ready_for_review", reason="Done"))
+        assert not a.done and not a.attempted

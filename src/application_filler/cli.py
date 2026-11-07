@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 from pydantic import ValidationError
 
 from .agent import ApplicationAgent
-from .browser import BrowserError, BrowserSession, NetworkGuard
+from .browser import BrowserError, BrowserSession, NetworkGuard, browser_input
 from .config import load_cover_letter_examples, load_settings
 from .demo import ScriptedDemoClient, demo_server, demo_settings
 from .documents import remove_generated, render_letter
@@ -148,7 +148,7 @@ def run(args, settings):
                 print(
                     "Browsers remain open for review/manual submission. Press Enter when finished."
                 )
-                input()
+                browser_input(browser, "")
         finally:
             for agent in agents:
                 if settings.documents.retention == "delete_after_run":

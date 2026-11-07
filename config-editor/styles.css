@@ -631,3 +631,39 @@ h1 {
   display: block;
   margin-bottom: 5px;
 }
+
+.language-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.language-label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.language-row > button {
+  min-height: 41px;
+}
+
+.add-language {
+  margin-top: 12px;
+}
+
+@media (max-width: 640px) {
+  .language-row {
+    grid-template-columns: minmax(0, 1fr);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .language-row > button {
+    justify-self: start;
+  }
+}

@@ -181,6 +181,7 @@ def test_iframe_srcdoc_and_apply_popup(application):
 
 def test_failed_optional_answer_blocks_premature_completion(application):
     with application({"/": "<label>Name<input value='Existing'></label>"}) as a:
+        a.settings.submission = "manual"
         result = a.execute(
             "answer_fields",
             {"answers": [answer(reference(a, "Name"), value="Changed").model_dump()]},

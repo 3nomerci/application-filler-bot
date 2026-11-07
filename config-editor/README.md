@@ -18,6 +18,35 @@ docker compose --env-file docker/compose.env run --rm --no-deps -T demo validate
 
 The command above runs in the **application-filler-bot** directory, not the editor folder. The bot itself continues to run using the repository's Docker workflow.
 
+## Languages, gender and veteran status
+
+In **Languages**, add a language name and proficiency per row. Levels are plain
+text, such as `C1/fluent`, `Native` or `Beginner`. Empty rows and duplicate language
+names must be completed or removed before saving. The editor stores these pairs
+directly under `candidate.languages`, alongside the other personal facts.
+
+**Personal information** has a free-text **Gender** field and a **Veteran status**
+selector. Gender can stay blank. Veteran status distinguishes **Veteran**, **Not a
+veteran** and **Unknown / not supplied**; unknown is never converted into a No.
+New configurations supply no languages, gender or veteran status by default.
+
+The agent receives the complete candidate profile as facts in its model context.
+For example, it can reference `candidate.languages.English` when answering an
+English-proficiency question. It reads the actual question and available choices,
+then uses the supplied level to choose a supported answer. This does not establish
+language-test certification or a different proficiency you have not supplied.
+
+Gender and veteran questions are subject to **Agent behavior → Personal disclosures**:
+
+- **Ask me:** requests approval before answering, even when the fact is stored.
+- **Use explicitly supplied facts:** allows relevant answers from the supplied profile;
+  the bot should ask if the question's definition or choices need more information.
+- **Skip this topic:** skips the question.
+
+Storing these facts does not change the disclosure policy or submission permission.
+Different questions, such as pronouns or a specific protected-veteran category,
+must be interpreted separately rather than assumed from a broad profile entry.
+
 ## What to provide for cover letters
 
 - **Factual background:** your degrees and dates, tools and methods you used, work or research, projects, your personal contributions and verified results, career interests and motivation. Copy relevant facts from your CV here; the bot does not extract them from the PDF. The field's example shows a possible structure, and **?** opens a checklist.
