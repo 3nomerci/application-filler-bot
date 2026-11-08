@@ -125,7 +125,14 @@ def run(args, settings):
                     session = BrowserSession(context, guard, settings)
                     session.open(url)
                     agent = ApplicationAgent(
-                        session, client, settings, url, private, artifacts, args.interactive
+                        session,
+                        client,
+                        settings,
+                        url,
+                        private,
+                        artifacts,
+                        args.interactive,
+                        defer_input=not args.ask_immediately,
                     )
                     agents.append(agent)
                     try:
@@ -144,6 +151,10 @@ def run(args, settings):
                 reports.append(report)
                 save()
                 print(f"  {report['status']} — {report['reason']}")
+                for question in report.get("pending_questions", []):
+                    print(f"    Pending: {question['question']}")
+            if args.interactive:
+                review_applications(agents, browser, save)
             if not args.headless and sys.stdin.isatty():
                 print(
                     "Browsers remain open for review/manual submission. Press Enter when finished."
@@ -165,6 +176,28 @@ def run(args, settings):
     )
 
 
+def review_applications(agents, browser, save):
+    """Review in-session work without restarting browsers, ledgers or budgets."""
+    while pending := [a for a in agents if a.pending_inputs and not a.attempted]:
+        print("\nPending applications:")
+        for agent in pending:
+            print(f"  Application {agent.report['input_number']}: {agent.report['host']}")
+            for request, _ in agent.pending_inputs:
+                print(f"    - {request.question}")
+        reply = browser_input(browser, "Review these now? [y/yes, Enter=finish, /quit=stop]: ")
+        if reply.strip().casefold() == "/quit":
+            raise KeyboardInterrupt
+        if reply.strip().casefold() not in {"y", "yes"}:
+            return
+        for agent in pending:
+            print(f"\nApplication {agent.report['input_number']}: {agent.report['host']}")
+            try:
+                agent.review_pending()
+            finally:
+                save()
+            print(f"  {agent.report['status']} — {agent.report['reason']}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Docker-first Claude job-application agent")
     parser.add_argument("--config", type=Path, default=Path("private/instructions.yaml"))
@@ -175,6 +208,11 @@ def main():
         cmd = sub.add_parser(command)
         cmd.add_argument("--headless", action="store_true")
         cmd.add_argument("--interactive", action="store_true")
+        cmd.add_argument(
+            "--ask-immediately",
+            action="store_true",
+            help="With --interactive, ask as questions arise instead of batch review",
+        )
         cmd.add_argument("--dev-local", action="store_true", help=argparse.SUPPRESS)
         if command == "run":
             cmd.add_argument("urls", nargs="*")
@@ -185,6 +223,8 @@ def main():
                 help="Real Haiku on fictional local forms; uses credits",
             )
     args = parser.parse_args()
+    if getattr(args, "ask_immediately", False) and not args.interactive:
+        parser.error("--ask-immediately requires --interactive")
     try:
         if args.command == "init":
             initialize()

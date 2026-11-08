@@ -35,6 +35,8 @@ Only disclose candidate details to the intended employer/application service. In
 job/employer context before entering data. Ask if a handoff or purpose is unclear. No account
 creation, interview participation, assessment answers, payments, or CAPTCHA bypass. Ask for human
 help with logins/challenges. Use request_input; unattended runs will flag and continue.
+Treat an email/privacy preflight that may create a candidate account as an account step:
+request manual help before proceeding. Never promise automatic restart/resume after closing.
 
 Read the entire question, hints, group legend and actual choices. Infer the user's intended answer
 from their facts, job context, instructions and permitted research. Match meaning, not exact wording
@@ -59,6 +61,19 @@ Use requests without a ref only for missing context or manual browser help, not 
 After a confirmed manual browser step, read the updated page and retain the user's entries;
 do not require approval simply to keep what the user just entered. Ask about remaining gaps.
 An optional question that the user chooses to leave unchanged does not block completion.
+Use kind=answer for one typed fact/preference, including context without a field ref.
+Use kind=manual only for a browser handoff such as login/challenge/unsupported interaction.
+For any required human help, call request_input before complete(blocked) so it appears in the
+review checklist; describing a login or question only in the completion reason is insufficient.
+If input is deferred, record other missing answers separately, fill independent fields, then
+complete(blocked). Do not repeat a deferred request or advance past an unresolved permission.
+Never submit with pending questions. After a declined/skipped answer, do not ask it again in
+the same pass. Keep the field unchanged and report blocked if it is necessary to continue.
+Residence and willingness to relocate do not specify a preferred work country, city or work mode.
+Use explicit location rankings/defaults if supplied; otherwise ask. Never invent referral source,
+competing offers, prior applications, future studies, pronouns or assessment availability.
+Do not translate 'Beginner' into a precise CEFR level or a grade into a percentile without evidence.
+Application-processing consent does not authorize proctoring or assessment commitments.
 
 Work authorization: establish the actual work country, not just company HQ or a broad region.
 Use only explicitly supplied citizenships and existing immigration/work statuses. Never infer
@@ -127,6 +142,11 @@ class AnswerFields(StrictModel):
 
 class RequestInput(StrictModel):
     question: str = Field(description="One question only; no bundled decisions or unrelated notes.")
+    kind: Literal["answer", "manual", "cover_letter"] = Field(
+        default="answer",
+        description="answer: typed fact or field approval; manual: browser help; "
+        "cover_letter: approve the generated document.",
+    )
     ref: str | None = Field(
         default=None, description="Exact control ref for a field/consent approval."
     )
@@ -206,7 +226,10 @@ TOPICS = {
     "personal_disclosure": (
         r"\bgender\b|disabil|ethnic|veteran|criminal|\bsesso\b|\brace\b|invalidit|marital|married"
     ),
-    "consent": r"consent|agree|certif|privacy|terms|attest|signature",
+    "consent": (
+        r"consent|agree|certif|privacy|terms|attest|signature|gdpr|proctor|data.retention"
+        r"|personal data.{0,25}kept"
+    ),
     "cover_letter": (
         r"cover.?letter|lettera.{0,12}presentazione|tell us about yourself|why.{0,40}(join|work)"
     ),
@@ -228,6 +251,7 @@ class ApplicationAgent:
         artifacts: Path,
         interactive=False,
         ask=input,
+        defer_input=False,
     ):
         self.browser, self.client, self.settings, self.url = browser, client, settings, url
         self.private, self.artifacts, self.interactive, self.ask = (
@@ -237,6 +261,8 @@ class ApplicationAgent:
             ask,
         )
         self.messages: list[dict] = []
+        self.defer_input = defer_input
+        self.pending_inputs: list[tuple[RequestInput, tuple | None]] = []
         self.sources: dict[str, str] = {}
         self.searches = 0
         self.approvals = {}
@@ -295,6 +321,62 @@ class ApplicationAgent:
 
     def prompt_user(self, question: str):
         return browser_input(self.browser.context.browser, question, self.ask)
+
+    def request_identity(self, request):
+        if request.ref:
+            return self.identity(request.ref)
+        if request.kind == "cover_letter":
+            if not self.generated:
+                raise BrowserError("Generate the cover letter before requesting review")
+            return ("cover_letter", hashlib.sha256(self.generated[0].read_bytes()).hexdigest())
+        return None
+
+    def review_pending(self):
+        """Resolve one batch of questions and continue the same conversation/browser."""
+        if not self.interactive or self.attempted or not self.pending_inputs:
+            return self.report
+        self.browser.page.bring_to_front()
+        pending, self.pending_inputs = self.pending_inputs, []
+        replies = []
+        self.defer_input = False
+        self.done = False
+        try:
+            for index, (request, identity) in enumerate(pending):
+                try:
+                    if self.request_identity(request) != identity:
+                        raise BrowserError("Question changed while deferred; inspect and ask again")
+                    result = self.execute("request_input", request.model_dump())
+                except (BrowserError, PlaywrightError) as exc:
+                    result = {
+                        "error": str(exc)
+                        if isinstance(exc, BrowserError)
+                        else "Deferred control changed; inspect and ask again"
+                    }
+                replies.append({"question": request.model_dump(), "reply": result})
+                if self.done:
+                    self.pending_inputs.extend(pending[index + 1 :])
+                    break
+        finally:
+            self.defer_input = True
+            self.report["pending_questions"] = [r.model_dump() for r, _ in self.pending_inputs]
+        self.messages.append(
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "review_answers": replies,
+                        "instruction": "Continue using these user answers. "
+                        "Keep declined choices unchanged. "
+                        "Inspect current fields before applying field-bound approvals.",
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
+        if not self.done:
+            self.report.update(status="blocked", reason="incomplete")
+            return self.run()
+        return self.report
 
     def leave_unchanged(self, ref):
         identity = self.identity(ref)
@@ -502,17 +584,35 @@ class ApplicationAgent:
                 )
             return {"results": results, "page": self.browser.inspect()}
         elif name == "request_input":
+            if args.kind != "answer" and (args.ref or args.proposed_value is not None):
+                raise BrowserError(
+                    "Manual browser help and document review have no field ref or proposed answer"
+                )
             if args.proposed_value is not None and not args.ref:
                 raise BrowserError(
                     "A proposed answer needs its exact field ref; ask one decision at a time"
                 )
-            if not self.interactive:
-                self.done = True
-                self.report.update(
-                    status="blocked", reason="user_input_required", question=args.question
-                )
-                return {"blocked": "This is an unattended run; application flagged"}
+            if self.defer_input or not self.interactive:
+                identity = self.request_identity(args)
+                if not any(old == args for old, _ in self.pending_inputs):
+                    self.pending_inputs.append((args, identity))
+                return {
+                    "deferred": True,
+                    "instruction": "Continue independent fields. "
+                    "Queue other missing answers separately, then complete(blocked). "
+                    "Do not repeat this question, cross a permission barrier, or submit.",
+                }
             question = "".join(c for c in args.question if c.isprintable() or c == "\n")
+            if args.kind == "cover_letter":
+                identity = self.request_identity(args)
+                approved = self.approve(
+                    f"Review {self.directory / 'cover-letter.md'}. "
+                    "Approve this cover letter for use?"
+                )
+                if identity != self.request_identity(args):
+                    raise BrowserError("Cover letter changed during review; review it again")
+                self.letter_approved = approved
+                return {"approved_for_upload": approved}
             if args.ref:
                 target = self.browser.target(args.ref)
                 identity = self.identity(args.ref)
@@ -602,9 +702,34 @@ class ApplicationAgent:
                     "Use browser.form_input or answer_fields to apply it; "
                     "other consents need separate decisions.",
                 }
-            before = {
-                self.identity(c["ref"]): c["value"] for c in self.browser.inspect()["controls"]
-            }
+            if args.kind == "answer":
+                value = self.prompt_user(question + "\nType your answer (Enter=skip, /quit=stop): ")
+                if value.strip() == "/quit":
+                    raise KeyboardInterrupt
+                if not value.strip():
+                    self.done = True
+                    self.report.update(status="blocked", reason="user_skipped_context")
+                return {
+                    "answer": value or None,
+                    "instruction": "This is user-supplied context, "
+                    "not permission to accept declarations or consent for another field.",
+                }
+
+            def states(page):
+                # Observations include disabled controls; do not try to authorize
+                # an action on each one simply to remember the form's state.
+                return {
+                    (
+                        c["ref"],
+                        self.browser.targets[c["ref"]].frame_url,
+                        c["name"],
+                        c["label"],
+                        c["group"],
+                    ): (c["value"], c["checked"], tuple(c["files"]))
+                    for c in page["controls"]
+                }
+
+            before = states(self.browser.inspect())
             if not self.approve(question + " Complete any browser step, then continue?"):
                 self.done = True
                 self.report.update(status="blocked", reason="user_declined_or_deferred")
@@ -616,9 +741,8 @@ class ApplicationAgent:
             page = self.browser.inspect()
             # The user can fix a previously rejected answer during the handoff.
             # Retain unchanged unresolved fields; normal form validation still applies.
-            for control in page["controls"]:
-                identity = self.identity(control["ref"])
-                if identity in before and control["value"] != before[identity]:
+            for identity, state in states(page).items():
+                if identity in before and state != before[identity]:
                     self.unresolved.discard(identity)
             return {"continue": True, "page": page}
         elif name == "create_cover_letter":
@@ -627,8 +751,10 @@ class ApplicationAgent:
             self.generated = list(render_letter(args.markdown, self.directory))
             self.letter_approved = self.settings.documents.cover_letter == "trusted"
             if not self.letter_approved:
-                print(f"Review cover letter: {self.directory / 'cover-letter.md'}")
-                self.letter_approved = self.approve("Approve this cover letter for upload?")
+                self.execute(
+                    "request_input",
+                    {"kind": "cover_letter", "question": "Approve the generated cover letter?"},
+                )
             return {"created": True, "approved_for_upload": self.letter_approved}
         elif name == "upload_document":
             if args.kind == "cv":
@@ -641,6 +767,11 @@ class ApplicationAgent:
                 path = self.generated[1]
             self.browser.upload(args.ref, path)
         elif name == "submit_application":
+            if self.pending_inputs:
+                raise BrowserError(
+                    "Pending user questions block submission; complete independent "
+                    "fields and finish blocked for review"
+                )
             if self.settings.submission != "auto":
                 raise BrowserError("Manual submission: finish ready_for_review without clicking")
             if self.attempted:
@@ -675,6 +806,12 @@ class ApplicationAgent:
         return {"ok": True, "page": self.browser.inspect()}
 
     def complete(self, args: Complete):
+        if self.pending_inputs and not self.attempted:
+            if args.status != "blocked":
+                raise BrowserError("Pending questions remain; finish blocked for user review")
+            self.report.update(status="needs_input", reason=args.reason)
+            self.done = True
+            return {"status": "needs_input"}
         page = self.browser.inspect()
         if args.status == "submitted":
             evidence = (args.confirmation_text or "").strip()
@@ -741,22 +878,29 @@ class ApplicationAgent:
         start = self.client.calls
         try:
             system = self.prompt()
-            self.messages = [
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "task": "Complete this job application under my instructions. "
-                            "Start from this page.",
-                            "page": self.browser.inspect(),
-                            "interactive": self.interactive,
-                        },
-                        ensure_ascii=False,
-                    ),
-                }
-            ]
+            if not self.messages:
+                self.messages = [
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "task": "Complete this job application under my instructions. "
+                                "Start from this page.",
+                                "page": self.browser.inspect(),
+                                "interactive": self.interactive,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                ]
             search_tool_limit = min(self.settings.model.web_searches_per_application, 2)
-            for _ in range(self.settings.model.max_calls_per_application):
+            for _ in range(
+                max(
+                    0,
+                    self.settings.model.max_calls_per_application
+                    - self.report.get("model_calls", 0),
+                )
+            ):
                 remaining = max(0, self.settings.model.web_searches_per_application - self.searches)
                 next_limit = min(remaining, 2)
                 if next_limit != search_tool_limit:
@@ -840,8 +984,6 @@ class ApplicationAgent:
                     if native:
                         result_block["toolset_name"] = "browser"
                     results.append(result_block)
-                if self.done:
-                    break
                 if results:
                     self.messages.append({"role": "user", "content": results})
                 elif response.get("stop_reason") != "pause_turn":
@@ -852,6 +994,8 @@ class ApplicationAgent:
                             "Use complete to report a supported outcome.",
                         }
                     )
+                if self.done:
+                    break
             else:
                 self.report["reason"] = "Application model-call budget reached"
         except (ModelError, BrowserError, PlaywrightError, ValueError, OSError) as exc:
@@ -863,7 +1007,10 @@ class ApplicationAgent:
         finally:
             if self.attempted and self.report["status"] != "submitted_confirmed":
                 self.report["status"] = "submission_unverified"
-            self.report["model_calls"] = self.client.calls - start
+            self.report["model_calls"] = (
+                self.report.get("model_calls", 0) + self.client.calls - start
+            )
+            self.report["pending_questions"] = [r.model_dump() for r, _ in self.pending_inputs]
             self.report["research_sources"] = list(self.sources)
             self.report["web_searches"] = self.searches
         return self.report

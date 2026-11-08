@@ -224,6 +224,22 @@ In the guided editor, set the topic policies and general instructions, then use
 and specific relocation preferences there too, so the agent need not ask each time.
 Keep unknown facts absent rather than assuming negative answers.
 
+The template and guided editor also include preferred work locations (in priority
+order), remote/hybrid/on-site preferences, technical interests, actual referral
+source, degree titles/status/grades and original grading scales, current/future
+studies, competing offers, prior applications and assessment availability. These
+are optional facts, not permission to guess. A grade does not establish a percentile;
+“Beginner” does not establish an exact CEFR level; gender does not establish pronouns.
+Employment status belongs in `candidate.employment_status`, separately from work
+permits or citizenship-based rights in `candidate.existing_work_statuses`.
+
+Existing private files are preserved. Add the relevant new fields yourself or open
+your existing file in the editor; the bot does not invent or migrate personal facts.
+Describe any permitted defaults explicitly in `instructions`, such as choosing the
+first available location from your ranked list. Account creation remains outside the
+agent's scope: candidate-account preflights require manual help. Proctoring and
+assessment commitments need their own authorization, beyond application-data consent.
+
 ## 3. Add your API key and job links
 
 Real runs require an Anthropic API account with credits and access to the pinned
@@ -263,8 +279,23 @@ docker compose --env-file docker/compose.env run --rm --service-ports agent run 
 
 Open **http://localhost:6080/vnc.html** and connect using the temporary viewing
 password printed in the terminal. This is the container's browser, separate from
-your usual browser. Answer questions in the terminal. Wait for the agent's input
-or final-review prompt before editing its browser yourself.
+your usual browser. By default, missing answers are collected while the agent fills
+independent fields and processes other links. Pending questions block final submission.
+At the end of the batch, the terminal lists pending applications and offers to review
+them. Answer `yes` to review: the relevant tab is brought forward, you answer questions
+or complete a manual browser step, and the agent continues that application in the
+same session. Further questions are collected for another review round. Enter skips
+the review round; remaining questions are recorded in the report.
+
+Factual questions accept typed text. Checkbox approvals use yes/no. Manual browser
+handoffs explicitly ask you to finish the browser step before continuing. Generated
+cover letters configured for review are also queued, with approval bound to the
+document reviewed. Wait for a review/handoff prompt before editing the browser.
+
+Add `--ask-immediately` alongside `--interactive` if you prefer to answer questions
+as they arise. In review answer mode, use of supplied facts remains allowed through
+explicit profile references; unrelated facts with the same value are not treated as
+evidence for a new answer.
 
 With the default `submission: manual`, review and submit in this browser **before
 pressing Enter to close the run**. Closing the container discards forms and logins.
@@ -288,19 +319,26 @@ local fake submission):
 docker compose --env-file docker/compose.env run --rm --service-ports agent run --demo --interactive
 ```
 
-For unattended operation, omit `--interactive`; unanswered questions become blocked
-reports and the batch continues. Add `--headless` to hide the browser. Set
+For unattended operation, omit `--interactive`; questions are queued, independent work
+continues where possible, and applications needing answers are reported as `needs_input`.
+Add `--headless` to hide the browser. Set
 `submission: auto` explicitly if you want final submission without review; otherwise
 filled forms disappear when a headless run ends. The agent records submission
 attempts to avoid automatically retrying uncertain submissions.
+Review does not reset per-application calls, total spending or browser-action limits.
+It works only while this run's browser is alive; it is not restart/resume support.
 
 The report's status tells you what happened: **`submitted_confirmed`** means the agent
-clicked Submit and observed a new acceptance message; **`blocked`** means it did not
+clicked Submit and observed a new acceptance message; **`needs_input`** means questions
+remain for review; **`blocked`** means it did not
 submit; **`submission_unverified`** means it attempted submission but could not verify
 acceptance. Do not infer success just because the batch moved to the next link.
 An email may arrive later or not at all. Automatic mode still stops for missing facts,
 required consent or a login. A failure in local pre-submission checks does not consume
 the one submission attempt; an actual attempted submission is never retried automatically.
+Budget stops now show estimated spend, the allowance for the next request and the
+remaining budget. A long conversation can exceed its remaining allowance while a
+fresh, shorter application still fits. Budget estimates are conservative, not invoices.
 
 When finished:
 

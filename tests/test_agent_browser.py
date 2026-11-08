@@ -261,8 +261,10 @@ def test_sensitive_ask_survives_incorrect_model_category_and_approval_is_bound(a
 
 def test_unattended_question_flags_application(application):
     with application({"/": "<label>Question<input></label>"}) as a:
-        a.execute("request_input", {"question": "Missing candidate information"})
-        assert a.done and a.report["reason"] == "user_input_required"
+        result = a.execute("request_input", {"question": "Missing candidate information"})
+        assert result["deferred"] and not a.done
+        a.complete(Complete(status="blocked", reason="Missing candidate information"))
+        assert a.done and a.report["status"] == "needs_input"
 
 
 def test_select_semantics_and_profile_text_cannot_be_rewritten(application):

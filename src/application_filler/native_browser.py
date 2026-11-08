@@ -41,6 +41,11 @@ Use browser.form_input for ordinary fields. answer_fields remains an optional sh
 profile keys and carries research evidence for inferred salary/visa answers. Native browser tools
 automatically use saved user approval for the exact control/value; no extra approval argument
 is needed.
+In review mode use answer_fields with an explicit source for copying profile facts; matching a
+value alone does not establish its meaning. For searchable comboboxes, form_input replaces the
+search query (including an empty string); Backspace/Delete can edit that query. Inspect and select
+the actual option afterwards. Query text is not a committed answer or consent. Request approval
+for the actual option when needed. Prefer read_page/find over repeated screenshots when readable.
 Use browser.type for focused text and browser.key for dropdowns and date widgets. Browser clicks
 on submit buttons and Enter in forms are guarded: use submit_application for final submission.
 Browser file_upload accepts document_ids=['cv'] or ['cover_letter'] only; no filesystem paths.
@@ -188,6 +193,17 @@ class NativeBrowser:
         from .agent import TOPICS, Answer
 
         target = self.browser.target(ref)
+        if target.metadata["query"] and target.metadata["kind"] in {"text", "search"}:
+            if not isinstance(value, str):
+                raise BrowserError("Dropdown search text must be a string")
+            self.browser.count_action()
+            target.element.fill(value)
+            self.browser.settle()
+            return {
+                "query_updated": True,
+                "instruction": "Inspect options and select an answer. "
+                "Search text alone is not a confirmed answer.",
+            }
         text = " ".join(target.metadata[k] for k in ("label", "group", "name")).casefold()
         categories = [key for key, pattern in TOPICS.items() if re.search(pattern, text)]
         category = categories[0] if categories else "general"
@@ -208,19 +224,18 @@ class NativeBrowser:
         if category in {"salary", "work_authorization"}:
             raise BrowserError("Use answer_fields with source or research evidence for this field")
 
-        # Exact facts can pass review mode without the model recreating source annotations.
-        def facts(node, prefix=""):
-            if isinstance(node, dict):
-                for key, item in node.items():
-                    yield from facts(item, f"{prefix}.{key}".lstrip("."))
-            elif type(node) in {str, int, float, bool} and node != "":
-                yield prefix, node
-
+        # Recognize only these unambiguous field/fact pairs for their default-value
+        # handling. Equality alone (especially True/False) is not factual provenance.
         source = next(
             (
                 key
-                for key, fact in facts(self.agent.settings.candidate)
-                if type(value) is type(fact) and value == fact
+                for key, pattern in (
+                    ("phone", r"phone|telefono"),
+                    ("date_of_birth", r"birth|nascita"),
+                )
+                if isinstance(value, str)
+                and value == self.agent.settings.candidate.get(key)
+                and re.search(pattern, text)
             ),
             None,
         )
@@ -345,6 +360,8 @@ class NativeBrowser:
                     key: meta[key]
                     for key in (
                         "label",
+                        "hint",
+                        "nearby_text",
                         "group",
                         "kind",
                         "name",
@@ -571,6 +588,8 @@ class NativeBrowser:
             "enter": "Enter",
             "tab": "Tab",
             "space": "Space",
+            "backspace": "Backspace",
+            "delete": "Delete",
             "arrowdown": "ArrowDown",
             "arrowup": "ArrowUp",
             "arrowleft": "ArrowLeft",
@@ -578,6 +597,20 @@ class NativeBrowser:
         }
         for chord in args["text"].split():
             key = "+".join(aliases.get(part.lower(), part) for part in chord.split("+"))
+            if key in {"Backspace", "Delete"}:
+                target = self.browser.target(self.focused_ref())
+                if not target.metadata["query"] or target.metadata["kind"] not in {
+                    "text",
+                    "search",
+                }:
+                    raise BrowserError(
+                        "Deletion keys are for dropdown search only; "
+                        "use form_input to change an answer"
+                    )
+                self.browser.count_action()
+                for _ in range(repeat):
+                    target.element.press(key)
+                continue
             if key not in {
                 "Tab",
                 "Shift+Tab",

@@ -50,7 +50,9 @@ def test_network_and_browser_edits_continue_while_terminal_waits(application, fi
             finally:
                 other.close()
         else:
-            result = a.execute("request_input", {"question": "Complete the location field"})
+            result = a.execute(
+                "request_input", {"kind": "manual", "question": "Complete the location field"}
+            )
             assert result["continue"] is True
             assert any(c["value"] == "Paris" for c in result["page"]["controls"])
             assert a.identity(reference(a, "Location")) not in a.unresolved
@@ -65,3 +67,26 @@ def test_terminal_eof_propagates_without_hanging(application):
     with application(interactive=True, ask=closed_input) as a:
         with pytest.raises(EOFError):
             a.approve("Continue?")
+
+
+def test_manual_checkbox_fix_with_disabled_next_button(application):
+    edited = Event()
+
+    def ask(_):
+        assert edited.wait(5)
+        return "yes"
+
+    html = "<label>Privacy<input type=checkbox required></label><button disabled>Next</button>"
+    with application({"/": html}, interactive=True, ask=ask) as a:
+        a.settings.answers.topics["consent"] = "ask"
+        ref = reference(a, "Privacy")
+        with pytest.raises(BrowserError, match="approval"):
+            a.native.execute("form_input", {"target": {"type": "ref", "ref": ref}, "value": True})
+        a.browser.page.expose_function("edited", edited.set)
+        a.browser.page.evaluate("""() => setTimeout(async () => {
+            document.querySelector('input').checked = true;
+            await window.edited();
+        }, 200)""")
+        a.execute("request_input", {"kind": "manual", "question": "Complete the checkbox"})
+        assert not a.unresolved
+        assert a.browser.page.locator("input").is_checked()

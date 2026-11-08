@@ -37,6 +37,17 @@
         }),
         field('candidate.relocation', 'Relocation preference', 'relocation', 'Choose whether you would move for a job, or describe where you would move.', { placeholder: 'Open to relocating within the EU' }),
         field('candidate.start_date', 'Availability / start date', 'text', 'Describe when you could start work.', { placeholder: 'Immediately, or after a two-month notice period' }),
+        field('candidate.employment_status', 'Employment status', 'nullable', 'Employed, unemployed or student; this is separate from immigration/work rights.'),
+        field('candidate.preferred_work_locations', 'Preferred work locations', 'tags', 'Rank cities or countries, separated by commas. Residence does not establish your preferred workplace.', { placeholder: 'Paris, Madrid' }),
+        field('candidate.work_arrangement', 'Work arrangement', 'nullable', 'Your remote, hybrid or on-site preference, including any flexibility.'),
+        field('candidate.preferred_technical_areas', 'Preferred technical areas', 'tags', 'Rank your interests, separated by commas, for forms offering several teams.', { placeholder: 'Data engineering, Backend' }),
+        field('candidate.referral_source', 'How you found the jobs', 'nullable', 'The actual source; describe exceptions per employer if needed. Opening their website is not the discovery source.'),
+        field('candidate.pronouns', 'Pronouns', 'nullable', 'Optional. Separate from gender; optional disclosures still follow your policy.'),
+        field('candidate.current_enrollment', 'Current studies', 'nullable', 'Whether and where you are currently enrolled, if known.'),
+        field('candidate.future_studies', 'Future study plans', 'nullable', 'Include tentative plans if relevant; leave blank rather than assuming none.'),
+        field('candidate.other_offers', 'Other offers and deadlines', 'nullable', 'Only real offers and timelines. Leave blank if not supplied.'),
+        field('candidate.prior_applications', 'Prior applications / assessments', 'nullable', 'Employer, role and assessment or interview dates, if relevant to reapplication rules.'),
+        field('candidate.assessment_availability', 'Assessment availability', 'nullable', 'Whether you can meet assessment deadlines. This does not authorize proctoring or let the agent take assessments.'),
         field('candidate.gender', 'Gender', 'nullable', 'Optional. Enter the wording you use for your gender, or leave blank.', {
           placeholder: 'Man',
           help: 'This supplies a fact for gender questions. It does not establish your pronouns or an answer to a different question about legal sex. The Personal disclosures policy in Agent behavior still decides whether the bot asks, uses supplied facts or skips the question.'
@@ -76,6 +87,17 @@
         field('candidate.education.masters.start_date', 'Master’s start date', 'date', 'Use the calendar or the date order shown in this field. Leave blank if unknown.'),
         field('candidate.education.masters.end_date', 'Master’s end date', 'date', 'Actual or expected completion. Use the date order shown in this field.', {
           help: 'If the degree is still in progress, say so in your factual background. If you only know the month or year, leave the date blank and describe what you know there instead of inventing a day.'
+        }),
+        ...['bachelors', 'masters'].flatMap(level => {
+          const title = level === 'bachelors' ? 'Bachelor’s' : 'Master’s';
+          return [
+            field(`candidate.education.${level}.degree_title`, `${title} degree title`, 'nullable', 'The official degree title.'),
+            field(`candidate.education.${level}.discipline`, `${title} discipline`, 'nullable', 'Your field of study.'),
+            field(`candidate.education.${level}.status`, `${title} status`, 'nullable', 'Completed, ongoing or planned, only if known.'),
+            field(`candidate.education.${level}.grade`, `${title} grade`, 'nullable', 'Your actual result in its original scale.'),
+            field(`candidate.education.${level}.grading_scale`, `${title} grading scale`, 'nullable', 'For example, out of 110. Do not convert a score into a percentile.'),
+            field(`candidate.education.${level}.class_rank`, `${title} class rank`, 'nullable', 'Only an established ranking. Leave blank if unknown.')
+          ];
         })
       ]
     },
@@ -258,7 +280,12 @@ candidate:
   citizenships: [] # Your actual citizenships as country codes, e.g. [IT] or [CA, FR].
   residence_country: null # Do not confuse nationality with residence.
   existing_work_statuses: null # Unknown, not a claim that no statuses exist.
+  employment_status: null # Employed/unemployed/student; separate from work authorization.
   relocation: ""
+  preferred_work_locations: [] # Rank countries/cities, e.g. [Paris, Madrid]; empty means unknown.
+  work_arrangement: null # Your preference for remote, hybrid or on-site work.
+  preferred_technical_areas: [] # Ranked interests for forms offering several teams/specialties.
+  referral_source: null # How you actually found these jobs; never assume the employer's website.
   start_date: ""
   date_of_birth: null # Quoted ISO date, e.g. "2000-12-31"; never infer a missing date.
   protected_category_member: null # Explicit false -> No; true -> skip; null -> ask.
@@ -268,6 +295,7 @@ candidate:
   #   English: "B2 / upper-intermediate"
   #   French: "Beginner"
   gender: null # Optional self-described gender, e.g. "Man", "Woman" or your own wording.
+  pronouns: null # Separate from gender; optional questions still follow disclosure policy.
   veteran_status: null # true: veteran; false: not a veteran; null: not supplied.
   # Gender/veteran answers still follow answers.topics.personal_disclosure (ask/infer/skip).
   education:
@@ -276,11 +304,28 @@ candidate:
       institution_local_name: ""
       start_date: null # Quoted YYYY-MM-DD.
       end_date: null # Completion/expected completion date; specify status separately if known.
+      degree_title: null
+      discipline: null
+      status: null # Completed/ongoing/planned, only if known.
+      grade: null # Your actual grade, as text, e.g. "105"; not a percentile.
+      grading_scale: null # Original scale, e.g. "out of 110".
+      class_rank: null # Only if established; never inferred from the grade.
     masters:
       institution: ""
       institution_local_name: ""
       start_date: null
       end_date: null
+      degree_title: null
+      discipline: null
+      status: null
+      grade: null
+      grading_scale: null
+      class_rank: null
+  current_enrollment: null # Whether/where you currently study; graduation dates alone are not enough.
+  future_studies: null # Planned further degrees, including tentative plans if relevant.
+  other_offers: null # Actual competing offers and deadlines; unknown does not mean none.
+  prior_applications: null # Employer/role and assessment/interview dates, if applicable.
+  assessment_availability: null # Your availability for time-limited assessments; agent cannot take them.
 
 instructions: >-
   Apply for the jobs I provide using truthful facts and these preferences.
@@ -292,6 +337,13 @@ instructions: >-
   Do not assume nationality from my name/address or invent a visa or residence permit.
   Distinguish the right to work, employer sponsorship and residence registration.
   Ask if job location, personal status or question meaning cannot be established.
+  Use my ranked locations and work preferences when supplied; residence and willingness
+  to relocate alone do not establish a preferred work location or arrangement.
+  Never invent referral sources, precise language levels, academic rankings or study plans.
+  Ask when a required grade cannot be represented truthfully; skip optional grade questions.
+  Ordinary application-data consent does not authorize proctoring or assessment commitments.
+  Flag account/profile-creation steps for manual help before proceeding.
+  Finish independent fields when an answer is missing, and collect separate questions for review.
 
 answers:
   mode: trusted # trusted: allow supported inference; review: approve inferred answers first.

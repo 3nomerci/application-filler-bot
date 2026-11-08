@@ -14,7 +14,12 @@ candidate:
   citizenships: [] # Your actual citizenships as country codes, e.g. [IT] or [CA, FR].
   residence_country: null # Do not confuse nationality with residence.
   existing_work_statuses: null # Unknown, not a claim that no statuses exist.
+  employment_status: null # Employed/unemployed/student; separate from work authorization.
   relocation: ""
+  preferred_work_locations: [] # Rank countries/cities, e.g. [Paris, Madrid]; empty means unknown.
+  work_arrangement: null # Your preference for remote, hybrid or on-site work.
+  preferred_technical_areas: [] # Ranked interests for forms offering several teams/specialties.
+  referral_source: null # How you actually found these jobs; never assume the employer's website.
   start_date: ""
   date_of_birth: null # Quoted ISO date, e.g. "2000-12-31"; never infer a missing date.
   protected_category_member: null # Explicit false -> No; true -> skip; null -> ask.
@@ -24,6 +29,7 @@ candidate:
   #   English: "B2 / upper-intermediate"
   #   French: "Beginner"
   gender: null # Optional self-described gender, e.g. "Man", "Woman" or your own wording.
+  pronouns: null # Separate from gender; optional questions still follow disclosure policy.
   veteran_status: null # true: veteran; false: not a veteran; null: not supplied.
   # Gender/veteran answers still follow answers.topics.personal_disclosure (ask/infer/skip).
   education:
@@ -32,11 +38,28 @@ candidate:
       institution_local_name: ""
       start_date: null # Quoted YYYY-MM-DD.
       end_date: null # Completion/expected completion date; specify status separately if known.
+      degree_title: null
+      discipline: null
+      status: null # Completed/ongoing/planned, only if known.
+      grade: null # Your actual grade, as text, e.g. "105"; not a percentile.
+      grading_scale: null # Original scale, e.g. "out of 110".
+      class_rank: null # Only if established; never inferred from the grade.
     masters:
       institution: ""
       institution_local_name: ""
       start_date: null
       end_date: null
+      degree_title: null
+      discipline: null
+      status: null
+      grade: null
+      grading_scale: null
+      class_rank: null
+  current_enrollment: null # Whether/where you currently study; graduation dates alone are not enough.
+  future_studies: null # Planned further degrees, including tentative plans if relevant.
+  other_offers: null # Actual competing offers and deadlines; unknown does not mean none.
+  prior_applications: null # Employer/role and assessment/interview dates, if applicable.
+  assessment_availability: null # Your availability for time-limited assessments; agent cannot take them.
 
 instructions: >-
   Apply for the jobs I provide using truthful facts and these preferences.
@@ -48,6 +71,13 @@ instructions: >-
   Do not assume nationality from my name/address or invent a visa or residence permit.
   Distinguish the right to work, employer sponsorship and residence registration.
   Ask if job location, personal status or question meaning cannot be established.
+  Use my ranked locations and work preferences when supplied; residence and willingness
+  to relocate alone do not establish a preferred work location or arrangement.
+  Never invent referral sources, precise language levels, academic rankings or study plans.
+  Ask when a required grade cannot be represented truthfully; skip optional grade questions.
+  Ordinary application-data consent does not authorize proctoring or assessment commitments.
+  Flag account/profile-creation steps for manual help before proceeding.
+  Finish independent fields when an answer is missing, and collect separate questions for review.
 
 answers:
   mode: trusted # trusted: allow supported inference; review: approve inferred answers first.

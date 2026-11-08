@@ -69,7 +69,13 @@ class ClaudeClient:
         reservation += min(searches, 2) * 0.01
         reservation += images * 0.002  # Conservative allowance per viewport image.
         if self.estimated_usd + reservation > self.settings.estimated_budget_usd:
-            raise ModelError("Local estimated cost budget reached")
+            raise ModelError(
+                "Next request exceeds the local estimated cost budget: "
+                f"spent ${self.estimated_usd:.4f}; next-request allowance ${reservation:.4f}; "
+                f"remaining ${max(0, self.settings.estimated_budget_usd - self.estimated_usd):.4f} "
+                f"of ${self.settings.estimated_budget_usd:.2f}. No request was sent. "
+                "A shorter application may still fit the remaining allowance."
+            )
         self.calls += 1
         status = None
         provider_detail = ""

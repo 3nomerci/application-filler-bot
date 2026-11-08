@@ -54,6 +54,20 @@ def test_editor_contract_tracks_python_settings():
     assert defaults == Settings().model_dump(mode="json")
 
 
+def test_location_and_grade_guidance_round_trips_without_inventing_defaults(editor, tmp_path):
+    editor.locator("#field-candidate-preferred_work_locations").fill("Paris, Madrid")
+    editor.locator("#field-candidate-work_arrangement").fill("Hybrid")
+    editor.get_by_role("button", name="Education", exact=True).click()
+    editor.locator("#field-candidate-education-masters-grade").fill("110")
+    editor.locator("#field-candidate-education-masters-grading_scale").fill("out of 110")
+    settings = export_settings(editor, tmp_path)
+    assert settings.candidate["preferred_work_locations"] == ["Paris", "Madrid"]
+    assert settings.candidate["work_arrangement"] == "Hybrid"
+    assert settings.candidate["education"]["masters"]["grade"] == "110"
+    assert settings.candidate["education"]["masters"]["class_rank"] is None
+    assert settings.candidate["other_offers"] is None
+
+
 def test_form_guidance_uses_plain_input_examples_and_export_matches_bot(editor, tmp_path):
     schema = editor.evaluate("window.CONFIG_SCHEMA")
     for section in schema:

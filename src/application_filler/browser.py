@@ -127,10 +127,16 @@ META = r"""el => {
     tag === 'textarea' ? 'textarea' : role || tag;
   const label = aria || el.getAttribute('aria-label') ||
     Array.from(el.labels||[]).map(text).join(' ') ||
+    (tag==='input' && ['submit','button','reset'].includes(el.type) ? el.value : '') ||
     (['a','button'].includes(tag)||role ? text(el) : '') || el.placeholder || '';
   const group = text(el.closest('fieldset')?.querySelector('legend')) ||
     el.closest('[role=group],[role=radiogroup]')?.getAttribute('aria-label') || '';
   return {label:label.slice(0,700),group:group.slice(0,700),kind,tag,
+    role, query:tag==='input' && role==='combobox' && Boolean(
+      el.getAttribute('aria-controls') || el.getAttribute('aria-owns')),
+    nearby_text:role==='combobox' ? text(el.parentElement?.parentElement).slice(0,350) : '',
+    hint:(el.getAttribute('aria-describedby')||'').split(/\s+/)
+      .map(id=>text(root.getElementById?.(id))).join(' ').trim().slice(0,700),
     name:(el.name||'').slice(0,200),type:el.type||'',href:el.href||'',
     required:Boolean(el.required || el.getAttribute('aria-required')==='true'),
     disabled:Boolean(el.disabled || el.readOnly || el.getAttribute('aria-disabled')==='true'),
@@ -185,7 +191,7 @@ class BrowserSession:
             frame = frame.parent_frame
         return bool(frame and self.guard.allowed(frame.url))
 
-    def inspect(self) -> dict:
+    def inspect(self, retry=True) -> dict:
         if self.page.is_closed():
             raise BrowserError("Browser tab was closed")
         if not self.guard.allowed(self.page.url):
@@ -194,37 +200,46 @@ class BrowserSession:
         texts = []
         excluded = []
         for index, frame in enumerate(self.page.frames):
-            if frame != self.page.main_frame and not frame.frame_element().is_visible():
-                continue
             try:
+                if frame.is_detached():
+                    continue
+                if frame != self.page.main_frame and not frame.frame_element().is_visible():
+                    continue
                 if not self.allowed_frame(frame):
                     excluded.append("unapproved_frame")
                     continue
+                texts.append(
+                    frame.locator("body").inner_text(timeout=5000)[
+                        : self.settings.browser.snapshot_chars
+                    ]
+                )
+                for element in frame.locator(SELECTOR).element_handles():
+                    if not element.is_visible() and element.get_attribute("type") != "file":
+                        continue
+                    meta = element.evaluate(META)
+                    if meta["kind"] == "hidden":
+                        continue
+                    ref = self.register(element, meta)
+                    controls.append({"ref": ref, "frame": index, **meta})
+            except PlaywrightError:
+                # Retry the observation once, never a click or submission. If the
+                # page keeps changing, expose that gap so completion stays blocked.
+                if retry:
+                    return self.inspect(retry=False)
+                if not frame.is_detached():
+                    excluded.append("changing_frame; read the page again")
             except (BrowserError, ValueError, OSError):
                 excluded.append("unapproved_frame")
                 continue
-            texts.append(
-                frame.locator("body").inner_text(timeout=5000)[
-                    : self.settings.browser.snapshot_chars
-                ]
-            )
-            for element in frame.locator(SELECTOR).element_handles():
-                if not element.is_visible() and element.get_attribute("type") != "file":
-                    continue
-                meta = element.evaluate(META)
-                if meta["kind"] == "hidden":
-                    continue
-                ref = self.register(element, meta)
-                controls.append({"ref": ref, "frame": index, **meta})
         text = "\n".join(texts)
         return {
             "url": self.page.url,
             "title": self.page.title(),
             "text": text[: self.settings.browser.snapshot_chars],
             "text_truncated": len(text) > self.settings.browser.snapshot_chars,
-            "controls": controls[:100],
+            "controls": controls,
             "total_controls": len(controls),
-            "controls_truncated": len(controls) > 100,
+            "controls_truncated": False,
             "uninspected": excluded,
             "blocked_host": self.guard.blocked_host,
         }
@@ -324,7 +339,11 @@ class BrowserSession:
         elif isinstance(value, str):
             e.fill(value, timeout=7000)
             actual = e.evaluate("el=>el.isContentEditable?el.innerText:el.value")
-            if actual != value:
+            # Formatting is harmless only when every digit and the international
+            # prefix agree. Never accept a dropped digit or a changed extension.
+            phone = kind == "tel" and re.fullmatch(r"\+?[\d\s().-]+", value)
+            equivalent = phone and re.sub(r"[\s().-]", "", actual) == re.sub(r"[\s().-]", "", value)
+            if actual != value and not equivalent:
                 raise BrowserError("Entered answer did not persist")
         else:
             raise BrowserError("Text controls need a string")
