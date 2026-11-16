@@ -18,7 +18,8 @@ x-browser: &browser
   security_opt:
     - no-new-privileges:true
     - seccomp=./docker/seccomp_profile.json
-  pids_limit: 512
+  # Chromium uses many threads across retained applications; these count as PIDs.
+  pids_limit: 2048
   mem_limit: 3g
   cpus: 2
 

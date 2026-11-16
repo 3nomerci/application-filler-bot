@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import BrowserContext, ElementHandle, Page
 from playwright.sync_api import Error as PlaywrightError
 
+from .browser_deadline import BrowserUnresponsive
 from .config import Settings
 
 
@@ -359,7 +360,12 @@ class BrowserSession:
         if target.element.evaluate("el=>el.files[0]?.name") != path.name:
             raise BrowserError("Attachment was not accepted")
 
-    def invalid_fields(self, scope_ref: str | None = None) -> list[str]:
+    def invalid_fields(
+        self,
+        scope_ref: str | None = None,
+        optional_required_pattern: str | None = None,
+        completed_uploads: set[str] | None = None,
+    ) -> list[str]:
         invalid = []
         scope = None
         if scope_ref:
@@ -372,13 +378,15 @@ class BrowserSession:
                 raise BrowserError(
                     "Reference must identify the application form or a control in it"
                 )
-        for target in self.targets.values():
+        for ref, target in self.targets.items():
             e = target.element
             try:
                 if e.owner_frame() not in self.page.frames or not e.evaluate("el=>el.isConnected"):
                     continue
                 if not e.is_visible() and target.metadata["kind"] != "file":
                     continue
+            except BrowserUnresponsive:
+                raise
             except Exception:
                 continue  # An old document's references cannot describe this form.
             if scope and (
@@ -386,7 +394,7 @@ class BrowserSession:
                 or not e.evaluate("(el,form)=>el.form===form || form.contains(el)", scope)
             ):
                 continue
-            if not e.evaluate("""el => {
+            valid = e.evaluate("""el => {
                 if (el.disabled || el.getAttribute('aria-disabled') === 'true') return true;
                 if (el.validity && !el.validity.valid) return false;
                 if (el.getAttribute('aria-invalid') === 'true') return false;
@@ -397,6 +405,20 @@ class BrowserSession:
                         return Boolean((el.value || el.textContent || '').trim());
                 }
                 return true;
-            }"""):
+            }""")
+            metadata = e.evaluate(META)
+            text = " ".join(metadata[k] for k in ("label", "group", "name"))
+            if (
+                optional_required_pattern
+                and not metadata["disabled"]
+                and metadata["kind"] in {"text", "textarea", "textbox", "file"}
+                and re.search(optional_required_pattern, text, re.IGNORECASE)
+            ):
+                if metadata["kind"] == "file":
+                    supplied = bool(metadata["files"]) or ref in (completed_uploads or set())
+                else:
+                    supplied = e.evaluate("el=>Boolean((el.value || el.innerText || '').trim())")
+                valid = valid and supplied
+            if not valid:
                 invalid.append(target.metadata["label"])
         return invalid

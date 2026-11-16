@@ -16,7 +16,10 @@ candidate:
   existing_work_statuses: null # Unknown, not a claim that no statuses exist.
   employment_status: null # Employed/unemployed/student; separate from work authorization.
   relocation: ""
-  preferred_work_locations: [] # Rank countries/cities, e.g. [Paris, Madrid]; empty means unknown.
+  preferred_work_locations: [] # Cities from most to least preferred; empty means unknown.
+  preferred_work_locations_unlisted: ask # ask or any_order (append other offered cities).
+  # Example shape, using only cities you actually want:
+  # preferred_work_locations: ["Paris, France", "Zurich, Switzerland", "Berlin, Germany"]
   work_arrangement: null # Your preference for remote, hybrid or on-site work.
   preferred_technical_areas: [] # Ranked interests for forms offering several teams/specialties.
   referral_source: null # How you actually found these jobs; never assume the employer's website.
@@ -73,7 +76,8 @@ instructions: >-
   Ask if job location, personal status or question meaning cannot be established.
   Use my ranked locations and work preferences when supplied; residence and willingness
   to relocate alone do not establish a preferred work location or arrangement.
-  Never invent referral sources, precise language levels, academic rankings or study plans.
+  Use the discovery-source and office-attendance defaults unless my specific preferences override them.
+  Never invent named referrers, precise language levels, academic rankings or study plans.
   Ask when a required grade cannot be represented truthfully; skip optional grade questions.
   Ordinary application-data consent does not authorize proctoring or assessment commitments.
   Flag account/profile-creation steps for manual help before proceeding.
@@ -83,6 +87,9 @@ answers:
   mode: trusted # trusted: allow supported inference; review: approve inferred answers first.
   protected_category: negative_or_skip # Employment protected category only; ask/skip also supported.
   cookies: accept_when_needed # Accept cookies needed to access the application; use ask to review.
+  defaults:
+    referral_source: LinkedIn # When no actual source is supplied; use only if the form allows it.
+    office_attendance: true # Ordinary on-site/day-count questions; explicit preferences override.
   topics:
     work_authorization: infer
     salary: infer
@@ -101,6 +108,7 @@ salary:
 
 documents:
   cv: cv.pdf # Put your approved fixed PDF in private/cv.pdf. Never modified by the agent.
+  transcript: transcript.pdf # Optional fixed PDF in private/. Missing is fine; null disables it.
   cover_letter: trusted # trusted, review, or skip. Independent of final submission.
   retention: keep # keep or delete_after_run; affects only generated cover-letter MD/PDF.
   background: "" # Your truthful experience/skills/achievements; not a fictional example.

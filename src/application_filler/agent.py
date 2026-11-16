@@ -12,12 +12,14 @@ from playwright.sync_api import Error as PlaywrightError
 from pydantic import Field, ValidationError
 
 from .browser import BrowserError, BrowserSession, browser_input
+from .browser_deadline import BrowserUnresponsive
 from .config import (
     ConfigurationError,
     Settings,
     StrictModel,
     load_cover_letter_examples,
     private_file,
+    transcript_file,
 )
 from .documents import render_letter
 from .llm import ModelError
@@ -70,8 +72,26 @@ complete(blocked). Do not repeat a deferred request or advance past an unresolve
 Never submit with pending questions. After a declined/skipped answer, do not ask it again in
 the same pass. Keep the field unchanged and report blocked if it is necessary to continue.
 Residence and willingness to relocate do not specify a preferred work country, city or work mode.
-Use explicit location rankings/defaults if supplied; otherwise ask. Never invent referral source,
-competing offers, prior applications, future studies, pronouns or assessment availability.
+Use explicit location rankings/defaults if supplied; otherwise ask.
+candidate.preferred_work_locations is ordered from most to least preferred. For city choices,
+keep the relative order of the offered cities that appear in that list; a preferred city not
+offered does not prevent using the remaining ranked choices. If
+candidate.preferred_work_locations_unlisted is 'any_order', append other offered cities after
+the ranked matches, in the form's existing order. That explicitly permits any order among
+unlisted cities, not a claim that the user prefers one of them over another. Otherwise ask when
+required choices are unranked. Never treat a broad country preference as a ranking of its cities.
+Ask about ambiguous place names. Location rankings do not establish work authorization.
+Never invent named referrers, competing offers, prior applications, future studies, pronouns
+or assessment availability.
+For 'Where did you hear about us?', prefer an explicit candidate.referral_source or specific user
+instruction. Otherwise use the authorized answers.defaults.referral_source (LinkedIn by default)
+when that option exists or the form accepts free text. Do not invent a referrer's name or select
+an unrelated discovery source when the configured default is unavailable; ask if required.
+For ordinary questions about working in the office/on-site X days per week, use
+answers.defaults.office_attendance (Yes by default) unless the candidate's work_arrangement,
+an explicit day limit, location restriction or other user instruction conflicts. Respect an
+explicit remote-only preference. This fallback does not authorize legal declarations,
+assessments, proctoring or work-authorization answers. A null fallback means ask when required.
 Do not translate 'Beginner' into a precise CEFR level or a grade into a percentile without evidence.
 Application-processing consent does not authorize proctoring or assessment commitments.
 
@@ -95,7 +115,15 @@ Cover letters: write Markdown using candidate facts and documents.background; ex
 references, not evidence. Tailor to this job and respect instructions and limits. Use
 create_cover_letter to render Markdown/PDF and upload_document(kind='cover_letter') if a file is
 requested. For a text field, supply the letter text through answer_fields(category='cover_letter').
+When cover letters are enabled, always write and supply a letter wherever the application offers
+a cover-letter textbox or upload, including optional fields. Expand an optional cover-letter
+section when offered. Optional does not mean skip. Do not replace the CV with a cover letter or
+upload a letter as a transcript. Respect documents.cover_letter='skip' or review requirements.
 Never alter the fixed CV. Ask if background is insufficient. Do not use example/demo career facts.
+For transcript-of-records requests use upload_document(kind='transcript') or the corresponding
+browser document_id. The supplied PDF is optional, fixed and unchanged. Initial document
+availability is shown in the starting task. If a transcript is missing, skip an optional upload
+or request the file when required; never substitute the CV/letter or invent academic records.
 
 Before submission check every required question, attachments, units and declarations. Manual mode:
 finish ready_for_review without clicking the final button. Auto mode: submit_application once, then
@@ -162,7 +190,7 @@ class CreateLetter(StrictModel):
 
 class Upload(StrictModel):
     ref: str
-    kind: Literal["cv", "cover_letter"]
+    kind: Literal["cv", "cover_letter", "transcript"]
 
 
 class Submit(StrictModel):
@@ -187,7 +215,7 @@ TOOL_MODELS = {
     ),
     "request_input": (RequestInput, "Ask the user for a missing answer/permission or manual help."),
     "create_cover_letter": (CreateLetter, "Render your factual Markdown into a local PDF."),
-    "upload_document": (Upload, "Attach the configured CV PDF or the generated cover-letter PDF."),
+    "upload_document": (Upload, "Attach the fixed CV/transcript or generated cover-letter PDF."),
     "submit_application": (Submit, "Attempt final submission once, only when permitted."),
     "complete": (
         Complete,
@@ -232,6 +260,7 @@ TOPICS = {
     ),
     "cover_letter": (
         r"cover.?letter|lettera.{0,12}presentazione|tell us about yourself|why.{0,40}(join|work)"
+        r"|motivation.?letter|letter of motivation|lettre.{0,12}motivation|anschreiben"
     ),
 }
 
@@ -270,6 +299,7 @@ class ApplicationAgent:
         self.answered: set[tuple] = set()
         self.generated: list[Path] = []
         self.letter_approved = settings.documents.cover_letter == "trusted"
+        self.cover_letter_uploads: set[str] = set()
         self.attempted = False
         self.before_submit = ""
         from .native_browser import NativeBrowser
@@ -761,11 +791,20 @@ class ApplicationAgent:
                 path = private_file(self.private, self.settings.documents.cv)
                 if path.suffix.lower() != ".pdf" or not path.read_bytes().startswith(b"%PDF-"):
                     raise BrowserError("The fixed CV must be a PDF")
+            elif args.kind == "transcript":
+                path = transcript_file(self.private, self.settings.documents)
+                if path is None:
+                    raise BrowserError(
+                        "No transcript PDF was supplied. Skip an optional transcript field; "
+                        "request the file if required. Never substitute the CV or a cover letter."
+                    )
             else:
                 if not self.generated or not self.letter_approved:
                     raise BrowserError("Generate and approve the cover letter before uploading")
                 path = self.generated[1]
             self.browser.upload(args.ref, path)
+            if args.kind == "cover_letter":
+                self.cover_letter_uploads.add(args.ref)
         elif name == "submit_application":
             if self.pending_inputs:
                 raise BrowserError(
@@ -780,7 +819,7 @@ class ApplicationAgent:
             latest = self.browser.inspect()
             self.browser.targets[args.ref] = target
             scope = args.ref if target.metadata["form"] else None
-            invalid = self.browser.invalid_fields(scope)
+            invalid = self.application_invalid_fields(scope)
             if self.unresolved or invalid or latest["uninspected"]:
                 raise BrowserError(
                     "Unresolved or invalid fields block submission; no click was attempted. "
@@ -836,7 +875,7 @@ class ApplicationAgent:
                 a["tool"] == "upload_document" for a in self.report["actions"]
             ):
                 raise BrowserError("No application fields or attachments have been completed")
-            invalid = self.browser.invalid_fields(args.ref)
+            invalid = self.application_invalid_fields(args.ref)
             if self.unresolved or invalid or page["uninspected"]:
                 raise BrowserError(
                     "Unresolved fields or uninspected frames remain. "
@@ -854,6 +893,15 @@ class ApplicationAgent:
             self.report["confirmation_text"] = args.confirmation_text
         self.done = True
         return {"status": status}
+
+    def application_invalid_fields(self, scope_ref: str | None = None):
+        return self.browser.invalid_fields(
+            scope_ref,
+            optional_required_pattern=(
+                TOPICS["cover_letter"] if self.settings.documents.cover_letter != "skip" else None
+            ),
+            completed_uploads=self.cover_letter_uploads,
+        )
 
     def collect_sources(self, content):
         def walk(value):
@@ -888,6 +936,12 @@ class ApplicationAgent:
                                 "Start from this page.",
                                 "page": self.browser.inspect(),
                                 "interactive": self.interactive,
+                                "documents_available": {
+                                    "transcript": transcript_file(
+                                        self.private, self.settings.documents
+                                    )
+                                    is not None,
+                                },
                             },
                             ensure_ascii=False,
                         ),
@@ -947,6 +1001,8 @@ class ApplicationAgent:
                                 if native
                                 else self.execute(use["name"], use["input"])
                             )
+                        except BrowserUnresponsive:
+                            raise
                         except ValidationError as exc:
                             issues = [
                                 {"field": ".".join(map(str, e["loc"])), "problem": e["type"]}
@@ -998,10 +1054,21 @@ class ApplicationAgent:
                     break
             else:
                 self.report["reason"] = "Application model-call budget reached"
-        except (ModelError, BrowserError, PlaywrightError, ValueError, OSError) as exc:
+        except (
+            ModelError,
+            BrowserError,
+            BrowserUnresponsive,
+            PlaywrightError,
+            ValueError,
+            OSError,
+        ) as exc:
+            if isinstance(exc, BrowserUnresponsive):
+                self.report["browser_unresponsive"] = True
             self.report["reason"] = (
                 str(exc)
-                if isinstance(exc, (ModelError, BrowserError, ConfigurationError))
+                if isinstance(
+                    exc, (ModelError, BrowserError, BrowserUnresponsive, ConfigurationError)
+                )
                 else "Application failed; review required"
             )
         finally:

@@ -81,13 +81,14 @@ The editor runs locally and offline.
 2. Fill in the sections using plain text, without surrounding quotation marks.
    Empty text fields show examples; date fields use the format shown by your browser.
 3. In **Documents & cover letters**, use **Upload CV PDF** to select your finished
-   PDF (up to 10 MB). Add your own factual background separately: the bot does not
+   PDF (up to 10 MB). You can also **Upload transcript PDF** for academic records.
+   Add your own factual background separately: the bot does not
    extract it from the CV. Optional past letters guide style; writing instructions
    control tone, language, length and emphasis.
-4. Where available, **Save to private/** lets you choose the repository's `private/`
-   folder and save `instructions.yaml` and the selected PDF together. Otherwise use
-   **Download for private/** or **Download**, and **Download selected PDF** for the CV,
-   then move both to `private/`. Selecting a PDF alone does not copy it there.
+4. In Chrome or Edge, **Save to private/** asks you to choose the cloned repository
+   once, then saves `instructions.yaml` and selected PDFs into its `private/` folder.
+   The folder is remembered for later saves. Other browsers offer **Export setup (.zip)**;
+   extract its `private/` folder into the repository. Selecting PDFs alone does not copy them.
 5. Run the Docker validation command in section 3 before running the bot. The editor
    checks syntax and settings; Docker validation also checks referenced letter files.
 
@@ -132,10 +133,17 @@ do not need to know each website's exact labels. YAML indentation matters. Comme
 starting with `#` explain the file to you; write instructions for the agent as actual
 values under `instructions`, `salary.instructions` or `documents.instructions`.
 
-### CV and optional cover letters
+### CV, transcript and cover letters
 
 Put your finished CV at **`private/cv.pdf`**, or change `documents.cv` to another
 PDF filename inside `private/`. There is no CV generation, rewriting or LaTeX workflow.
+
+Optionally put your transcript of records at **`private/transcript.pdf`**, next to
+the CV. Set `documents.transcript` for a different filename, or `null` to disable it.
+The file can be absent. When supplied, it must be a PDF up to 10 MB and is uploaded
+unchanged only for transcript requests. If it is missing, optional requests are
+skipped; a required request makes the bot ask for the file. The CV or a generated
+letter is never used in its place.
 
 To use automatic cover letters, fill in `documents.background` with truthful skills,
 experience and achievements, and edit `documents.instructions` for tone, language
@@ -145,6 +153,7 @@ place example letters in `private/` and list their filenames:
 ```yaml
 documents:
   cv: cv.pdf
+  transcript: transcript.pdf
   cover_letter: trusted
   background: >-
     I build Python services. My recent project reduced batch processing time
@@ -156,7 +165,9 @@ documents:
   retention: keep
 ```
 
-Only list example files that exist; use `examples: []` if you have none. Examples
+Enabled cover letters are written whenever the application offers a letter textbox
+or upload, including optional fields. Only list example files that exist; use
+`examples: []` if you have none. Examples
 guide style, not factual claims. `cover_letter: review` requests approval before use;
 `cover_letter: skip` disables writing. `retention: delete_after_run` deletes generated
 Markdown/PDF files after the run; it never deletes your CV or examples. Generated
@@ -170,8 +181,10 @@ file letters are stored under `artifacts/documents/`; textbox letters are entere
 | Work authorization / salary: `infer` | Research relevant evidence; ask if facts, country, pay units or evidence are insufficient. Salary strategy is `market`; `low` chooses a supported lower estimate. |
 | Personal disclosure / consent: `ask` | Ask before answering sensitive disclosures or accepting declarations. This overrides general trust. |
 | `answers.cookies: accept_when_needed` | Accept cookies needed to access the application; prefer rejecting unnecessary optional cookies. |
+| `answers.defaults.referral_source: LinkedIn` | Use LinkedIn when no actual source is supplied, if the form accepts it. Ask if required and unavailable. |
+| `answers.defaults.office_attendance: true` | Answer Yes to ordinary office/day-count questions unless explicit work or location preferences conflict. Set `false` for No or `null` to ask. |
 | `answers.protected_category: negative_or_skip` | For employment protected-category questions, answer No only when `candidate.protected_category_member` is explicitly `false`; skip when `true`; ask when unknown. Other disclosure rules stay separate. |
-| `documents.cover_letter: trusted` | Write a letter when requested, if you supplied enough factual background. |
+| `documents.cover_letter: trusted` | Always supply a letter when offered, including optional fields, using your factual background. |
 | `navigation.handoffs: trusted` | Follow relevant public HTTPS recruiting-site handoffs without per-host setup. |
 | `submission: manual` | Leave the final submission to you. |
 | Model budget | $0.50 estimated per run, 40 calls per application, 100 calls per run, up to 6 web searches per application. These are local limits, not a provider billing guarantee. |
@@ -351,6 +364,18 @@ If you replace the key, reload it with
 The explicit `--env-file` keeps Compose from loading an unrelated local `.env`.
 
 ## Limitations and development
+
+The browser container keeps earlier applications open for deferred review. Its
+process limit counts Chromium threads too; the default is 2,048, separately from
+the 3 GB memory limit. If the browser stops acknowledging a request, the agent
+now applies a 60-second timeout to that request, stops the batch, saves the current
+report, and avoids retrying an action whose outcome is unknown. In visible mode,
+tabs remain open until you press Enter; a crashed browser may need a new run.
+Updated runtime code requires rebuilding the agent image before starting that run:
+
+```sh
+docker compose --env-file docker/compose.env build agent
+```
 
 Logins, CAPTCHAs, missing preferences and some widgets need human help. The agent
 does not create accounts, take interviews/assessments or bypass bot protection.

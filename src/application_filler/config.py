@@ -15,10 +15,16 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+class AnswerDefaults(StrictModel):
+    referral_source: str | None = "LinkedIn"
+    office_attendance: bool | None = True
+
+
 class Answers(StrictModel):
     mode: Literal["trusted", "review"] = "trusted"
     protected_category: Literal["negative_or_skip", "ask", "skip"] = "negative_or_skip"
     cookies: Literal["accept_when_needed", "ask"] = "ask"
+    defaults: AnswerDefaults = Field(default_factory=AnswerDefaults)
     topics: dict[
         Literal["work_authorization", "salary", "personal_disclosure", "consent"],
         Literal["infer", "ask", "skip"],
@@ -42,6 +48,7 @@ class Salary(StrictModel):
 
 class Documents(StrictModel):
     cv: str = "cv.pdf"
+    transcript: str | None = "transcript.pdf"
     cover_letter: Literal["trusted", "review", "skip"] = "trusted"
     retention: Literal["keep", "delete_after_run"] = "keep"
     background: str = ""
@@ -128,6 +135,28 @@ def private_file(root: Path, relative: str) -> Path:
     if path.stat().st_size > 10000000:
         raise ValueError("File exceeds 10 MB")
     return path
+
+
+def transcript_file(root: Path, documents: Documents) -> Path | None:
+    """The conventional transcript is optional; an existing supplied file must be a safe PDF."""
+    if not documents.transcript:
+        return None
+    try:
+        path = (root / documents.transcript).resolve()
+        if not path.is_relative_to(root.resolve()):
+            raise ValueError
+        if not path.exists():
+            return None
+        path = private_file(root, documents.transcript)
+        with path.open("rb") as source:
+            if path.suffix.lower() != ".pdf" or source.read(5) != b"%PDF-":
+                raise ValueError
+        return path
+    except (OSError, ValueError):
+        raise ConfigurationError(
+            "documents.transcript: supply a PDF up to 10 MB inside private/, "
+            "or leave this optional document absent."
+        ) from None
 
 
 def load_cover_letter_examples(root: Path, documents: Documents) -> list[str]:

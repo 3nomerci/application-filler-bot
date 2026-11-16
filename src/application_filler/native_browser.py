@@ -48,7 +48,7 @@ the actual option afterwards. Query text is not a committed answer or consent. R
 for the actual option when needed. Prefer read_page/find over repeated screenshots when readable.
 Use browser.type for focused text and browser.key for dropdowns and date widgets. Browser clicks
 on submit buttons and Enter in forms are guarded: use submit_application for final submission.
-Browser file_upload accepts document_ids=['cv'] or ['cover_letter'] only; no filesystem paths.
+Browser file_upload accepts document_ids=['cv'], ['cover_letter'] or ['transcript']; no paths.
 For cover-letter textboxes use answer_fields(category='cover_letter') with the actual tailored text.
 'Tell us about yourself/why join' is a cover letter, not a protected personal disclosure.
 Copy date facts in the format the field requests; native date inputs require YYYY-MM-DD.
@@ -499,9 +499,13 @@ class NativeBrowser:
         elif name == "form_input":
             return [text_block(self.fill(self.ref(args["target"]), args["value"])), self.state()]
         elif name == "file_upload":
-            if args.get("paths") or args.get("document_ids") not in [["cv"], ["cover_letter"]]:
+            if args.get("paths") or args.get("document_ids") not in [
+                ["cv"],
+                ["cover_letter"],
+                ["transcript"],
+            ]:
                 raise BrowserError(
-                    "Use document_ids ['cv'] or ['cover_letter']; paths are disabled"
+                    "Use document_ids ['cv'], ['cover_letter'] or ['transcript']; no paths"
                 )
             self.agent.execute(
                 "upload_document",

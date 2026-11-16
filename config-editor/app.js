@@ -10,16 +10,24 @@
   const schema = window.CONFIG_SCHEMA;
   const fieldDefinitions = schema.flatMap((section) => section.fields);
   const fieldByPath = new Map(fieldDefinitions.map((field) => [field.path, field]));
+  const checkoutKey = new URL('../', window.location.href).href;
+  const expectedRepositoryName = decodeURIComponent(new URL(checkoutKey).pathname.split('/').filter(Boolean).at(-1) || 'repository');
+  const supportsFolderAccess = typeof window.showDirectoryPicker === 'function';
 
   const state = {
     source: window.CONFIG_TEMPLATE,
     filename: 'instructions.yaml',
-    fileHandle: null,
+    repositoryHandle: null,
+    folderRemembered: false,
+    restoringFolder: true,
+    saving: false,
     section: 'profile',
     dirty: false,
     openHelp: null,
     cvFile: null,
     cvPending: false,
+    transcriptFile: null,
+    transcriptPending: false,
     languageRows: null,
     languageDraftDirty: false,
     savedSource: window.CONFIG_TEMPLATE
@@ -72,7 +80,7 @@
   function valueAt(path, source = state.source) {
     const value = dataAt(path, source);
     const fallback = path.split('.').reduce((item, part) => item?.[part], window.CONFIG_DEFAULTS);
-    return value === undefined ? fallback ?? definitionAt(path)?.default ?? null : value;
+    return value === undefined ? fallback ?? fieldByPath.get(path)?.default ?? definitionAt(path)?.default ?? null : value;
   }
 
   function listAt(path, source = state.source) {
@@ -260,6 +268,11 @@
       warnings.push('Cover letters need factual background: education, skills, experience, projects and motivation. The CV is not read automatically.');
     }
     if (data.submission === 'auto') warnings.push('Automatic submission is enabled. The bot may send completed applications.');
+    const cvPath = valueAt('documents.cv', source);
+    const transcriptPath = valueAt('documents.transcript', source);
+    if (cvPath && transcriptPath && cvPath.replaceAll('\\', '/').toLowerCase() === transcriptPath.replaceAll('\\', '/').toLowerCase()) {
+      errors.push('Use different filenames for your CV and transcript.');
+    }
     if (data.answers?.topics?.consent === 'infer') warnings.push('Consent inference needs precise prior authorisation in your instructions.');
     return { errors, warnings };
   }
@@ -273,9 +286,9 @@
     $('#summary-status').textContent = errors.length
       ? `${errors.length} configuration issue${errors.length === 1 ? '' : 's'}`
       : warnings.length ? `${warnings.length} reminder${warnings.length === 1 ? '' : 's'}` : 'Preflight checks passed';
-    $('#save-button').disabled = errors.length > 0;
-    $('#download-button').disabled = errors.length > 0;
-    $('#save-folder-button').disabled = errors.length > 0;
+    $('#save-folder-button').disabled = errors.length > 0 || state.saving || state.restoringFolder;
+    $('#open-button').disabled = state.saving || state.restoringFolder;
+    $('#new-button').disabled = state.saving;
     return errors.length === 0;
   }
 
@@ -289,10 +302,12 @@
   function updateField(path, value) {
     try {
       replaceField(path, value);
-      if (path === 'documents.cv' && state.cvFile && value !== state.cvFile.name) {
-        state.cvFile = null;
-        state.cvPending = false;
-        render();
+      for (const kind of ['cv', 'transcript']) {
+        if (path === `documents.${kind}` && state[`${kind}File`] && value !== state[`${kind}File`].name) {
+          state[`${kind}File`] = null;
+          state[`${kind}Pending`] = false;
+          render();
+        }
       }
     } catch (error) {
       toast(error.message);
@@ -381,12 +396,13 @@
         }
         updateField(field.path, control.value);
       });
-    } else if (field.type === 'textarea') {
+    } else if (field.type === 'textarea' || field.type === 'ranked') {
       control = el('textarea', `field-textarea${field.tall ? ' tall' : ''}`);
-      control.value = value ?? '';
+      control.value = field.type === 'ranked' ? (Array.isArray(value) ? value.join('\n') : '') : value ?? '';
       control.placeholder = field.placeholder || '';
       control.spellcheck = true;
-      control.addEventListener('input', () => updateField(field.path, control.value));
+      control.addEventListener('input', () => updateField(field.path, field.type === 'ranked'
+        ? control.value.split(/\r?\n/).map((city) => city.trim()).filter(Boolean) : control.value));
     } else {
       control = el('input', 'field-input');
       control.type = field.type === 'email' ? 'email' : field.type === 'date' ? 'date'
@@ -411,7 +427,8 @@
     control.id = id;
     control.setAttribute('aria-describedby', `${id}-description`);
     if (field.path === 'model.id') control.readOnly = true;
-    return field.path === 'documents.cv' ? makeCVControl(control) : control;
+    return ['documents.cv', 'documents.transcript'].includes(field.path)
+      ? makePDFControl(control, field.path.split('.')[1]) : control;
   }
 
   function makeLanguagesControl(field, value, id) {
@@ -604,6 +621,7 @@
   function render() {
     renderNav();
     refreshHeader();
+    updateSaveDestination();
     const section = schema.find((item) => item.id === state.section);
     $('#section-eyebrow').textContent = section.eyebrow;
     $('#section-title').textContent = section.title;
@@ -634,15 +652,16 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  function makeCVControl(filenameControl) {
+  function makePDFControl(filenameControl, kind) {
+    const title = kind === 'cv' ? 'CV' : 'transcript';
     const wrapper = el('div', 'cv-control');
     const picker = el('input', 'cv-file-input');
     picker.type = 'file';
     picker.accept = '.pdf,application/pdf';
-    picker.id = 'cv-file-input';
+    picker.id = `${kind}-file-input`;
     picker.hidden = true;
-    picker.setAttribute('aria-label', 'Upload CV PDF');
-    const choose = el('button', 'small-button', 'Upload CV PDF');
+    picker.setAttribute('aria-label', `Upload ${title} PDF`);
+    const choose = el('button', 'small-button', `Upload ${title} PDF`);
     choose.type = 'button';
     choose.addEventListener('click', () => picker.click());
     picker.addEventListener('change', async () => {
@@ -652,29 +671,36 @@
         if (!/\.pdf$/i.test(file.name)) throw new Error('Choose a file with a .pdf extension.');
         if (file.size > 10000000) throw new Error('The bot accepts files up to 10 MB.');
         if (!(await file.slice(0, 5).text()).startsWith('%PDF-')) throw new Error('This file does not have a PDF header.');
-        replaceField('documents.cv', file.name);
-        state.cvFile = file;
-        state.cvPending = true;
+        const otherKind = kind === 'cv' ? 'transcript' : 'cv';
+        if (file.name.toLowerCase() === String(valueAt(`documents.${otherKind}`) || '').toLowerCase()) {
+          throw new Error('Use different filenames for your CV and transcript.');
+        }
+        replaceField(`documents.${kind}`, file.name);
+        state[`${kind}File`] = file;
+        state[`${kind}Pending`] = true;
         render();
-        toast('CV selected locally. Save to private/ or download the PDF below.');
+        toast(supportsFolderAccess
+          ? `${title} selected locally. Save to private/ saves it with your configuration.`
+          : `${title} selected locally. Export setup includes it with your configuration.`);
       } catch (error) { toast(error.message); }
       picker.value = '';
     });
     const actions = el('div', 'cv-actions');
     actions.append(choose);
-    if (state.cvFile) {
-      const download = el('button', 'small-button', 'Download selected PDF');
-      download.type = 'button';
-      download.addEventListener('click', () => {
-        downloadBlob(state.cvFile, state.cvFile.name);
-        state.cvPending = false;
+    if (kind === 'transcript') {
+      const remove = el('button', 'small-button', 'Do not use a transcript');
+      remove.type = 'button';
+      remove.addEventListener('click', () => {
+        replaceField('documents.transcript', null);
+        state.transcriptFile = null;
+        state.transcriptPending = false;
         render();
-        toast(`Move the downloaded PDF to private/${state.cvFile.name}. Save your configuration there too.`);
       });
-      actions.append(download);
+      actions.append(remove);
     }
-    const message = state.cvFile
-      ? `${state.cvFile.name} (${(state.cvFile.size / 1000).toFixed(1)} KB) selected. ${state.cvPending ? 'Ready to save into private/.' : 'Keep the PDF in private/ alongside your configuration.'}`
+    const file = state[`${kind}File`];
+    const message = file
+      ? `${file.name} (${(file.size / 1000).toFixed(1)} KB) selected. ${state[`${kind}Pending`] ? 'Ready to save into private/.' : 'Keep the PDF in private/ alongside your configuration.'}`
       : 'No PDF selected in this editor.';
     const status = el('p', 'field-caption', message);
     status.setAttribute('role', 'status');
@@ -682,42 +708,115 @@
     return wrapper;
   }
 
-  async function savePrivateFolder() {
-    if (!verifyBeforeExport()) return;
-    if (typeof window.showDirectoryPicker !== 'function') {
-      downloadFile();
-      return;
+  function updateSaveDestination() {
+    const guidance = $('#save-guidance');
+    $('#change-folder-button').hidden = !supportsFolderAccess || !state.repositoryHandle;
+    $('#change-folder-button').disabled = state.saving;
+    if (!supportsFolderAccess) {
+      guidance.textContent = 'This browser cannot save directly to a folder. Export the setup, then extract its private/ folder into your cloned repository. Use Chrome or Edge for direct saving.';
+    } else if (state.repositoryHandle) {
+      guidance.textContent = `Save destination: ${state.repositoryHandle.name}/private/. ${state.folderRemembered ? 'This repository is remembered in your browser.' : 'This repository is selected for this tab.'}`;
+    } else {
+      guidance.textContent = `Choose your cloned ${expectedRepositoryName} repository folder once. Saves write the configuration and any selected PDFs into its private/ folder.`;
     }
+  }
+
+  async function restoreRepository() {
+    try {
+      if (!supportsFolderAccess) return;
+      const handle = await window.CONFIG_FOLDER_STORE.load(checkoutKey);
+      if (handle?.kind === 'directory' && typeof handle.getDirectoryHandle === 'function') {
+        state.repositoryHandle = handle;
+        state.folderRemembered = true;
+      }
+    } catch {
+      // Private browsing or browser policy may prevent persistence. Tab reuse still works.
+    } finally {
+      state.restoringFolder = false;
+      updateSaveDestination();
+      updateNotices();
+    }
+  }
+
+  async function repositoryDirectory(change = false) {
+    if (state.repositoryHandle && !change) {
+      const handle = state.repositoryHandle;
+      if (typeof handle.queryPermission === 'function'
+          && await handle.queryPermission({ mode: 'readwrite' }) !== 'granted'
+          && await handle.requestPermission({ mode: 'readwrite' }) !== 'granted') {
+        throw new Error('Folder access was not granted. Allow access to save, or choose Change repository.');
+      }
+      return handle;
+    }
+    const options = { id: 'application-filler-repository', mode: 'readwrite' };
+    if (state.repositoryHandle) options.startIn = state.repositoryHandle;
+    const handle = await window.showDirectoryPicker(options);
+    try {
+      const editor = await handle.getDirectoryHandle('config-editor');
+      await editor.getFileHandle('index.html');
+    } catch {
+      throw new Error('Select the cloned repository folder containing config-editor/index.html.');
+    }
+    state.repositoryHandle = handle;
+    state.folderRemembered = false;
+    try {
+      await window.CONFIG_FOLDER_STORE.save(checkoutKey, handle);
+      state.folderRemembered = true;
+    } catch { /* The selected handle remains usable for the rest of this tab. */ }
+    updateSaveDestination();
+    return handle;
+  }
+
+  async function savePrivateFolder() {
+    if (state.saving || state.restoringFolder || !verifyBeforeExport()) return;
     const source = state.source;
     const cvFile = state.cvFile;
+    const transcriptFile = state.transcriptFile;
+    state.saving = true;
+    updateNotices();
+    updateSaveDestination();
     try {
-      const directory = await window.showDirectoryPicker({ id: 'application-filler-private', mode: 'readwrite' });
-      // Write the PDF first so a failed PDF write cannot leave YAML referencing it.
-      async function write(name, contents) {
-        const handle = await directory.getFileHandle(name, { create: true });
-        const writable = await handle.createWritable();
-        try {
-          await writable.write(contents);
-          await writable.close();
-        } catch (error) {
-          await writable.abort().catch(() => {});
-          throw error;
+      for (const [kind, file] of [['cv', cvFile], ['transcript', transcriptFile]]) {
+        if (file && valueAt(`documents.${kind}`, source) !== file.name) {
+          throw new Error(`Choose your ${kind} again to match the configured filename.`);
         }
-        return handle;
       }
-      if (cvFile) {
-        if (valueAt('documents.cv', source) !== cvFile.name) throw new Error('Choose your CV again to match the configured filename.');
-        await write(cvFile.name, cvFile);
+      if (!supportsFolderAccess) {
+        downloadBlob(await window.createSetupArchive(source, cvFile, transcriptFile), 'application-filler-setup.zip');
+      } else {
+        const root = await repositoryDirectory();
+        const directory = await root.getDirectoryHandle('private', { create: true });
+        // Write the PDF first so a failed PDF write cannot leave YAML referencing it.
+        async function write(name, contents) {
+          const handle = await directory.getFileHandle(name, { create: true });
+          const writable = await handle.createWritable();
+          try {
+            await writable.write(contents);
+            await writable.close();
+          } catch (error) {
+            await writable.abort().catch(() => {});
+            throw error;
+          }
+        }
+        if (cvFile) await write(cvFile.name, cvFile);
+        if (transcriptFile) await write(transcriptFile.name, transcriptFile);
+        await write('instructions.yaml', source);
       }
-      state.fileHandle = await write('instructions.yaml', source);
       state.filename = 'instructions.yaml';
       state.savedSource = source;
       state.dirty = state.source !== source;
       if (state.cvFile === cvFile) state.cvPending = false;
+      if (state.transcriptFile === transcriptFile) state.transcriptPending = false;
       render();
-      toast(`Saved instructions.yaml${cvFile ? ' and your CV' : ''} in ${directory.name}/.`);
+      toast(supportsFolderAccess
+        ? `Saved instructions.yaml${cvFile ? ' and your CV' : ''}${transcriptFile ? ' and your transcript' : ''} in ${state.repositoryHandle.name}/private/.`
+        : 'Setup exported. Extract its private/ folder into your cloned repository.');
     } catch (error) {
-      if (error.name !== 'AbortError') toast(`Could not save the folder: ${error.message}. Use the download buttons instead.`);
+      if (error.name !== 'AbortError') toast(`Could not save: ${error.message}`);
+    } finally {
+      state.saving = false;
+      updateNotices();
+      updateSaveDestination();
     }
   }
 
@@ -730,7 +829,7 @@
     toastTimeout = setTimeout(() => { node.hidden = true; }, 4200);
   }
 
-  function loadFile(source, filename, fileHandle = null) {
+  function loadFile(source, filename) {
     source = source.replace(/^\uFEFF/, '');
     const previous = { ...state };
     state.source = source;
@@ -744,8 +843,9 @@
     }
     state.cvFile = null;
     state.cvPending = false;
+    state.transcriptFile = null;
+    state.transcriptPending = false;
     state.filename = filename || 'instructions.yaml';
-    state.fileHandle = fileHandle;
     state.savedSource = source;
     state.dirty = false;
     state.section = 'profile';
@@ -754,20 +854,27 @@
   }
 
   async function openFile() {
-    if ((state.dirty || state.cvPending || state.languageDraftDirty) && !window.confirm('Discard unsaved changes and open another file?')) return;
-    if (typeof window.showOpenFilePicker === 'function') {
+    if (state.saving || state.restoringFolder) return;
+    if ((state.dirty || state.cvPending || state.transcriptPending || state.languageDraftDirty) && !window.confirm('Discard unsaved changes and open another file?')) return;
+    if (supportsFolderAccess) {
+      state.saving = true;
+      updateNotices();
+      updateSaveDestination();
       try {
-        const [handle] = await window.showOpenFilePicker({
-          multiple: false,
-          types: [{ description: 'Application Filler configuration', accept: { 'text/plain': ['.yaml', '.yml'] } }]
-        });
-        const file = await handle.getFile();
-        loadFile(await file.text(), file.name, handle);
-        return;
+        const root = await repositoryDirectory();
+        const directory = await root.getDirectoryHandle('private');
+        const handle = await directory.getFileHandle('instructions.yaml');
+        loadFile(await (await handle.getFile()).text(), 'instructions.yaml');
       } catch (error) {
-        if (error.name === 'AbortError') return;
-        // Local file:// and some browsers don't support the picker. Use <input>.
+        if (error.name !== 'AbortError') toast(error.name === 'NotFoundError'
+          ? 'No saved configuration was found in private/. Fill in a new profile and save it.'
+          : `Could not open the configuration: ${error.message}`);
+      } finally {
+        state.saving = false;
+        updateNotices();
+        updateSaveDestination();
       }
+      return;
     }
     $('#file-input').click();
   }
@@ -778,58 +885,18 @@
     return false;
   }
 
-  function downloadFile() {
-    if (!verifyBeforeExport()) return;
-    const file = new Blob([state.source], { type: 'text/yaml;charset=utf-8' });
-    downloadBlob(file, /\.ya?ml$/i.test(state.filename) ? state.filename : 'instructions.yaml');
-    state.savedSource = state.source;
-    state.dirty = false;
-    refreshHeader();
-    toast(state.cvPending
-      ? 'Configuration downloaded. Download your selected PDF in Documents & cover letters too; put both in private/.'
-      : 'Configuration downloaded. Place it in your bot’s private/ folder.');
-  }
-
-  async function saveFile() {
-    if (!verifyBeforeExport()) return;
-    const source = state.source;
-    if (typeof window.showSaveFilePicker !== 'function' && !state.fileHandle) {
-      downloadFile();
-      return;
-    }
-    try {
-      let handle = state.fileHandle;
-      if (!handle) {
-        handle = await window.showSaveFilePicker({
-          suggestedName: state.filename,
-          types: [{ description: 'Application Filler configuration', accept: { 'text/plain': ['.yaml', '.yml'] } }]
-        });
-      }
-      const writable = await handle.createWritable();
-      await writable.write(source);
-      await writable.close();
-      state.fileHandle = handle;
-      state.filename = handle.name;
-      state.savedSource = source;
-      state.dirty = state.source !== source;
-      refreshHeader();
-      toast('Configuration saved to your chosen file.');
-    } catch (error) {
-      if (error.name !== 'AbortError') toast(`Direct save was not available: ${error.message}. Use Download instead.`);
-    }
-  }
-
   // --- Lifecycle -----------------------------------------------------------
 
   $('#new-button').addEventListener('click', () => {
-    if ((state.dirty || state.cvPending || state.languageDraftDirty) && !window.confirm('Discard unsaved changes and start a new configuration?')) return;
+    if ((state.dirty || state.cvPending || state.transcriptPending || state.languageDraftDirty) && !window.confirm('Discard unsaved changes and start a new configuration?')) return;
     state.cvFile = null;
     state.cvPending = false;
+    state.transcriptFile = null;
+    state.transcriptPending = false;
     state.languageRows = null;
     state.languageDraftDirty = false;
     state.source = window.CONFIG_TEMPLATE;
     state.filename = 'instructions.yaml';
-    state.fileHandle = null;
     state.savedSource = state.source;
     state.dirty = false;
     state.section = 'profile';
@@ -842,13 +909,20 @@
     if (file) loadFile(await file.text(), file.name);
     event.target.value = '';
   });
-  $('#download-button').addEventListener('click', downloadFile);
-  $('#save-button').addEventListener('click', saveFile);
-  if (typeof window.showDirectoryPicker !== 'function') {
-    $('#save-folder-button').textContent = 'Download for private/';
-    $('#save-guidance').hidden = false;
-  }
+  if (!supportsFolderAccess) $('#save-folder-button').textContent = 'Export setup (.zip)';
   $('#save-folder-button').addEventListener('click', savePrivateFolder);
+  $('#change-folder-button').addEventListener('click', async () => {
+    state.saving = true;
+    updateNotices();
+    updateSaveDestination();
+    try { await repositoryDirectory(true); }
+    catch (error) { if (error.name !== 'AbortError') toast(error.message); }
+    finally {
+      state.saving = false;
+      updateNotices();
+      updateSaveDestination();
+    }
+  });
   $('#raw-text').addEventListener('input', (event) => {
     state.source = event.target.value;
     state.languageRows = null;
@@ -858,7 +932,7 @@
     updateNotices();
   });
   window.addEventListener('beforeunload', (event) => {
-    if (!state.dirty && !state.cvPending && !state.languageDraftDirty) return;
+    if (!state.dirty && !state.cvPending && !state.transcriptPending && !state.languageDraftDirty) return;
     event.preventDefault();
     event.returnValue = '';
   });
@@ -870,4 +944,5 @@
   });
 
   render();
+  restoreRepository();
 })();

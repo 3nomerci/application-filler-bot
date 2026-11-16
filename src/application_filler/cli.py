@@ -14,7 +14,8 @@ from pydantic import ValidationError
 
 from .agent import ApplicationAgent
 from .browser import BrowserError, BrowserSession, NetworkGuard, browser_input
-from .config import load_cover_letter_examples, load_settings
+from .browser_deadline import BrowserUnresponsive, browser_deadline
+from .config import load_cover_letter_examples, load_settings, transcript_file
 from .demo import ScriptedDemoClient, demo_server, demo_settings
 from .documents import remove_generated, render_letter
 from .llm import ClaudeClient
@@ -96,6 +97,7 @@ def run(args, settings):
             "PLAYWRIGHT_BROWSERS_PATH", str(Path(".cache/ms-playwright").resolve())
         )
         pw = stack.enter_context(sync_playwright())
+        stack.enter_context(browser_deadline(pw))
         # Only a minimal OS/display environment reaches Chromium; it never receives API credentials.
         permitted = {
             "PATH",
@@ -142,6 +144,12 @@ def run(args, settings):
                         agent.report["reason"] = "Interrupted; inspect any submission attempt"
                         reports.append(agent.report)
                         raise
+                except BrowserUnresponsive as exc:
+                    report = {
+                        "status": "blocked",
+                        "reason": str(exc),
+                        "browser_unresponsive": True,
+                    }
                 except (BrowserError, OSError, ValueError, PlaywrightError):
                     report = {
                         "status": "blocked",
@@ -153,13 +161,25 @@ def run(args, settings):
                 print(f"  {report['status']} — {report['reason']}")
                 for question in report.get("pending_questions", []):
                     print(f"    Pending: {question['question']}")
-            if args.interactive:
+                if report.get("browser_unresponsive"):
+                    print(
+                        f"Browser unresponsive; stopping with {len(urls) - index - 1} "
+                        f"unprocessed link(s). Saved report: {report_path}",
+                        flush=True,
+                    )
+                    break
+            stalled = any(report.get("browser_unresponsive") for report in reports)
+            if args.interactive and not stalled:
                 review_applications(agents, browser, save)
             if not args.headless and sys.stdin.isatty():
                 print(
                     "Browsers remain open for review/manual submission. Press Enter when finished."
                 )
-                browser_input(browser, "")
+                if stalled:
+                    # Do not issue further browser RPCs or resume automated actions.
+                    input("")
+                else:
+                    browser_input(browser, "")
         finally:
             for agent in agents:
                 if settings.documents.retention == "delete_after_run":
@@ -236,6 +256,7 @@ def main():
         )
         if args.command == "validate":
             load_cover_letter_examples(args.config.resolve().parent, settings.documents)
+            transcript_file(args.config.resolve().parent, settings.documents)
             print(
                 "Instructions and cover-letter examples valid. "
                 "No API key was read and no API calls were made."
@@ -255,6 +276,9 @@ def main():
             "Browser startup failed. Check the Docker build and Chromium sandbox.", file=sys.stderr
         )
         return 1
+    except BrowserUnresponsive as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except (KeyboardInterrupt, EOFError):
         print("Stopped. Submission attempts will not be automatically retried.")
         return 130

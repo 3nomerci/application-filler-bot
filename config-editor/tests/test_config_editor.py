@@ -2,7 +2,11 @@
 
 import json
 import re
+import threading
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 from playwright.sync_api import expect, sync_playwright
@@ -11,6 +15,69 @@ from application_filler.config import Settings, load_cover_letter_examples, load
 
 ROOT = Path(__file__).resolve().parents[2]
 EDITOR = ROOT / "config-editor"
+
+MOCK_REPOSITORY = """window.savedFiles = {};
+window.saveCount = 0;
+window.pickerCalls = 0;
+window.permissionRequests = 0;
+window.permission = 'granted';
+window.writeOrder = [];
+window.privateRequests = [];
+const privateDirectory = {
+  getFileHandle: async (name, options) => {
+    if (!options?.create && !(name in window.savedFiles)) {
+      throw new DOMException('Missing file', 'NotFoundError');
+    }
+    return { name,
+      getFile: async () => new File([window.savedFiles[name]], name),
+      createWritable: async () => {
+        let pending;
+        return {
+          write: async (value) => {
+            if (window.failWrite === name) throw new Error('Simulated write failure');
+            pending = typeof value === 'string' ? value
+              : Array.from(new Uint8Array(await value.arrayBuffer()));
+          },
+          close: async () => {
+            window.savedFiles[name] = pending;
+            window.writeOrder.push(name);
+            if (name === 'instructions.yaml') window.saveCount += 1;
+          },
+          abort: async () => {}
+        };
+      }
+    };
+  }
+};
+window.testRepository = {
+  kind: 'directory',
+  name: decodeURIComponent(
+    new URL('../', location.href).pathname.split('/').filter(Boolean).at(-1)),
+  queryPermission: async () => window.permission,
+  requestPermission: async () => {
+    window.permissionRequests += 1;
+    window.permission = window.denyPermission ? 'denied' : 'granted';
+    return window.permission;
+  },
+  getDirectoryHandle: async (name, options) => {
+    if (name === 'config-editor') {
+      if (window.invalidRepository) throw new DOMException('Missing editor', 'NotFoundError');
+      return {getFileHandle: async () => ({name: 'index.html'})};
+    }
+    if (name === 'private') {
+      window.privateRequests.push(options || {});
+      return privateDirectory;
+    }
+    throw new Error('Unexpected folder: ' + name);
+  }
+};
+window.showDirectoryPicker = async () => {
+  window.pickerCalls += 1;
+  if (window.cancelPicker) throw new DOMException('Canceled', 'AbortError');
+  return window.testRepository;
+};
+window.showSaveFilePicker = () => { throw new Error('Save As must never be used'); };
+"""
 
 
 @pytest.fixture(scope="session")
@@ -25,9 +92,11 @@ def chromium():
 def editor(chromium):
     context = chromium.new_context(accept_downloads=True, offline=True)
     page = context.new_page()
+    page.add_init_script(MOCK_REPOSITORY)
     failures = []
     page.on("pageerror", lambda error: failures.append(str(error)))
     page.goto((EDITOR / "index.html").as_uri())
+    expect(page.locator("#save-folder-button")).to_be_enabled()
     yield page
     context.close()
     assert not failures
@@ -39,10 +108,12 @@ def raw_yaml(page, source):
 
 
 def export_settings(page, tmp_path):
-    with page.expect_download() as event:
-        page.get_by_role("button", name="Download", exact=True).click()
+    count = page.evaluate("window.saveCount")
+    page.get_by_role("button", name="Save to private/", exact=True).click()
+    page.wait_for_function("count => window.saveCount > count", arg=count)
+    expect(page.locator("#save-folder-button")).to_be_enabled()
     path = tmp_path / "instructions.yaml"
-    event.value.save_as(path)
+    path.write_text(page.evaluate("window.savedFiles['instructions.yaml']"), encoding="utf-8")
     return load_settings(path)
 
 
@@ -55,7 +126,7 @@ def test_editor_contract_tracks_python_settings():
 
 
 def test_location_and_grade_guidance_round_trips_without_inventing_defaults(editor, tmp_path):
-    editor.locator("#field-candidate-preferred_work_locations").fill("Paris, Madrid")
+    editor.locator("#field-candidate-preferred_work_locations").fill("Paris\nMadrid")
     editor.locator("#field-candidate-work_arrangement").fill("Hybrid")
     editor.get_by_role("button", name="Education", exact=True).click()
     editor.locator("#field-candidate-education-masters-grade").fill("110")
@@ -66,6 +137,23 @@ def test_location_and_grade_guidance_round_trips_without_inventing_defaults(edit
     assert settings.candidate["education"]["masters"]["grade"] == "110"
     assert settings.candidate["education"]["masters"]["class_rank"] is None
     assert settings.candidate["other_offers"] is None
+
+
+def test_city_ranking_preserves_order_country_names_and_unlisted_city_policy(editor, tmp_path):
+    control = editor.get_by_label("Preferred cities (highest preference first)", exact=True)
+    control.fill("Paris, France\nMilan, Italy\nLondon, UK\nZurich, Switzerland")
+    editor.get_by_label("Other offered cities", exact=True).select_option("any_order")
+    settings = export_settings(editor, tmp_path)
+    assert settings.candidate["preferred_work_locations"] == [
+        "Paris, France",
+        "Milan, Italy",
+        "London, UK",
+        "Zurich, Switzerland",
+    ]
+    assert settings.candidate["preferred_work_locations_unlisted"] == "any_order"
+    editor.get_by_role("button", name="Education", exact=True).click()
+    editor.get_by_role("button", name="Personal information", exact=True).click()
+    expect(control).to_have_value("Paris, France\nMilan, Italy\nLondon, UK\nZurich, Switzerland")
 
 
 def test_form_guidance_uses_plain_input_examples_and_export_matches_bot(editor, tmp_path):
@@ -130,6 +218,7 @@ def test_dates_follow_browser_input_and_export_as_bot_dates(chromium, tmp_path, 
     context = chromium.new_context(accept_downloads=True, offline=True, locale=locale)
     try:
         page = context.new_page()
+        page.add_init_script(MOCK_REPOSITORY)
         page.goto((EDITOR / "index.html").as_uri())
         birth = page.locator("#field-candidate-date_of_birth")
         assert birth.get_attribute("type") == "date"
@@ -251,7 +340,7 @@ answers:
 def test_language_rows_can_be_added_renamed_and_removed_without_losing_drafts(editor, tmp_path):
     editor.get_by_role("button", name="Languages", exact=True).click()
     editor.get_by_role("button", name="+ Add language", exact=True).click()
-    expect(editor.locator("#download-button")).to_be_disabled()
+    expect(editor.locator("#save-folder-button")).to_be_disabled()
     expect(editor.locator("#dirty-indicator")).to_be_visible()
     editor.get_by_role("textbox", name="Language 1", exact=True).fill("English")
     editor.get_by_role("button", name="Personal information", exact=True).click()
@@ -262,7 +351,7 @@ def test_language_rows_can_be_added_renamed_and_removed_without_losing_drafts(ed
     editor.get_by_role("button", name="+ Add language", exact=True).click()
     editor.get_by_role("textbox", name="Language 2", exact=True).fill("english")
     editor.get_by_role("textbox", name="Proficiency 2", exact=True).fill("B2")
-    expect(editor.locator("#download-button")).to_be_disabled()
+    expect(editor.locator("#save-folder-button")).to_be_disabled()
     expect(editor.locator("#notices")).to_contain_text("each language can appear only once")
     editor.get_by_role("textbox", name="Language 2", exact=True).fill("French")
     assert export_settings(editor, tmp_path).candidate["languages"] == {
@@ -306,7 +395,7 @@ def test_import_replaces_unfinished_language_drafts_and_raw_changes_refresh_cont
 )
 def test_new_profile_controls_reject_values_they_cannot_represent(editor, source):
     raw_yaml(editor, source)
-    expect(editor.locator("#download-button")).to_be_disabled()
+    expect(editor.locator("#save-folder-button")).to_be_disabled()
 
 
 def test_exported_language_and_disclosure_facts_reach_the_existing_agent(editor, tmp_path):
@@ -371,7 +460,7 @@ answers:
 )
 def test_editor_validation_matches_bot(editor, tmp_path, source, valid):
     raw_yaml(editor, source)
-    assert editor.locator("#download-button").is_enabled() == valid
+    assert editor.locator("#save-folder-button").is_enabled() == valid
     path = tmp_path / "instructions.yaml"
     path.write_text(source, encoding="utf-8")
     if valid:
@@ -431,7 +520,7 @@ def test_missing_sections_use_bot_defaults_and_can_be_added(editor, tmp_path):
     assert settings.documents.background == "I build Python tools."
 
 
-def test_cv_upload_download_and_reject_invalid_files(editor, tmp_path):
+def test_cv_upload_save_and_reject_invalid_files(editor, tmp_path):
     editor.get_by_role("button", name="Documents & cover letters", exact=True).click()
     original = b"%PDF-1.4\n% Fictional test CV\n%%EOF\n"
     editor.locator("#cv-file-input").set_input_files(
@@ -439,11 +528,8 @@ def test_cv_upload_download_and_reject_invalid_files(editor, tmp_path):
     )
     expect(editor.locator("#field-documents-cv")).to_have_value("alex-cv.pdf")
     assert export_settings(editor, tmp_path).documents.cv == "alex-cv.pdf"
-    with editor.expect_download() as event:
-        editor.get_by_role("button", name="Download selected PDF", exact=True).click()
-    path = tmp_path / event.value.suggested_filename
-    event.value.save_as(path)
-    assert path.read_bytes() == original
+    assert bytes(editor.evaluate("window.savedFiles['alex-cv.pdf']")) == original
+    assert editor.get_by_role("button", name="Download selected PDF", exact=True).count() == 0
     editor.locator("#cv-file-input").set_input_files(
         {"name": "invalid.pdf", "mimeType": "application/pdf", "buffer": b"Not a PDF"}
     )
@@ -451,48 +537,255 @@ def test_cv_upload_download_and_reject_invalid_files(editor, tmp_path):
     expect(editor.locator("#field-documents-cv")).to_have_value("alex-cv.pdf")
 
 
+def test_transcript_and_cv_save_together_and_can_disable_without_deleting(editor, tmp_path):
+    editor.get_by_role("button", name="Documents & cover letters", exact=True).click()
+    cv = b"%PDF-1.4\n% Fictional CV\n%%EOF\n"
+    records = b"%PDF-1.4\n% Fictional transcript\n%%EOF\n"
+    for kind, data in [("cv", cv), ("transcript", records)]:
+        editor.locator(f"#{kind}-file-input").set_input_files(
+            {"name": f"{kind}.pdf", "mimeType": "application/pdf", "buffer": data}
+        )
+    settings = export_settings(editor, tmp_path)
+    assert settings.documents.transcript == "transcript.pdf"
+    saved = editor.evaluate("window.savedFiles")
+    assert bytes(saved["cv.pdf"]) == cv
+    assert bytes(saved["transcript.pdf"]) == records
+    assert editor.evaluate("window.writeOrder") == ["cv.pdf", "transcript.pdf", "instructions.yaml"]
+    editor.get_by_role("button", name="Do not use a transcript", exact=True).click()
+    assert export_settings(editor, tmp_path).documents.transcript is None
+    assert bytes(editor.evaluate("window.savedFiles['transcript.pdf']")) == records
+
+
+def test_failed_transcript_save_does_not_write_configuration(editor):
+    editor.get_by_role("button", name="Documents & cover letters", exact=True).click()
+    editor.locator("#transcript-file-input").set_input_files(
+        {"name": "records.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4\n%%EOF\n"}
+    )
+    editor.evaluate("window.failWrite = 'records.pdf'")
+    editor.locator("#save-folder-button").click()
+    expect(editor.locator("#toast")).to_contain_text("Could not save")
+    expect(editor.locator("#save-folder-button")).to_be_enabled()
+    expect(editor.locator("#dirty-indicator")).to_be_visible()
+    assert "instructions.yaml" not in editor.evaluate("window.savedFiles")
+
+
+def test_transcript_rejects_invalid_pdf_and_cv_filename_collision(editor):
+    editor.get_by_role("button", name="Documents & cover letters", exact=True).click()
+    editor.locator("#transcript-file-input").set_input_files(
+        {"name": "invalid.pdf", "mimeType": "application/pdf", "buffer": b"not PDF"}
+    )
+    expect(editor.locator("#toast")).to_contain_text("PDF header")
+    editor.locator("#transcript-file-input").set_input_files(
+        {"name": "CV.PDF", "mimeType": "application/pdf", "buffer": b"%PDF-1.4\n%%EOF\n"}
+    )
+    expect(editor.locator("#toast")).to_contain_text("different filenames")
+    editor.locator("#field-documents-transcript").fill("cv.pdf")
+    expect(editor.locator("#save-folder-button")).to_be_disabled()
+    expect(editor.locator("#notices")).to_contain_text("different filenames")
+
+
+def test_discovery_and_office_defaults_round_trip_and_can_be_disabled(editor, tmp_path):
+    editor.get_by_role("button", name="Agent behavior", exact=True).click()
+    source = editor.locator("#field-answers-defaults-referral_source")
+    office = editor.locator("#field-answers-defaults-office_attendance")
+    expect(source).to_have_value("LinkedIn")
+    expect(office).to_have_value("true")
+    source.fill("University careers service")
+    office.select_option("false")
+    settings = export_settings(editor, tmp_path)
+    assert settings.answers.defaults.referral_source == "University careers service"
+    assert settings.answers.defaults.office_attendance is False
+    source.fill("")
+    office.select_option("null")
+    settings = export_settings(editor, tmp_path)
+    assert settings.answers.defaults.referral_source is None
+    assert settings.answers.defaults.office_attendance is None
+
+
 def test_save_private_folder_writes_yaml_and_unchanged_pdf(editor, tmp_path):
-    editor.add_init_script("""window.savedFiles = {};
-      window.showDirectoryPicker = async () => ({ name: 'private',
-        getFileHandle: async (name) => ({ name,
-          createWritable: async () => ({
-            write: async (value) => { window.savedFiles[name] = typeof value === 'string'
-              ? value : Array.from(new Uint8Array(await value.arrayBuffer())); },
-            close: async () => {}, abort: async () => {}
-          })
-        })
-      });""")
-    editor.reload()
     assert editor.locator(".toolbar .primary").get_attribute("id") == "save-folder-button"
+    assert editor.locator(".toolbar button").count() == 3
     editor.get_by_role("button", name="Documents & cover letters", exact=True).click()
     original = b"%PDF-1.4\n%%EOF\n"
     editor.locator("#cv-file-input").set_input_files(
         {"name": "cv.pdf", "mimeType": "application/pdf", "buffer": original}
     )
-    expect(editor.get_by_role("button", name="Download selected PDF", exact=True)).to_be_visible()
-    editor.get_by_role("button", name="Save to private/", exact=True).click()
+    settings = export_settings(editor, tmp_path)
     expect(editor.locator("#toast")).to_contain_text("Saved instructions.yaml and your CV")
     saved = editor.evaluate("window.savedFiles")
     assert bytes(saved["cv.pdf"]) == original
-    path = tmp_path / "instructions.yaml"
-    path.write_text(saved["instructions.yaml"], encoding="utf-8")
-    assert load_settings(path).documents.cv == "cv.pdf"
+    assert settings.documents.cv == "cv.pdf"
+    assert editor.evaluate("window.writeOrder") == ["cv.pdf", "instructions.yaml"]
+    editor.get_by_role("button", name="Personal information", exact=True).click()
+    editor.locator("#field-candidate-full_name").fill("Alex Example")
+    assert export_settings(editor, tmp_path).candidate["full_name"] == "Alex Example"
+    assert editor.evaluate("window.pickerCalls") == 1
+    assert all(options == {"create": True} for options in editor.evaluate("window.privateRequests"))
 
 
-def test_primary_save_has_a_download_fallback_without_folder_access(editor, tmp_path):
+def test_open_connects_once_and_later_saves_use_the_same_repository(editor, tmp_path):
+    editor.evaluate("window.savedFiles['instructions.yaml'] = 'candidate: {full_name: Alex}\\n'")
+    editor.get_by_role("button", name="Open configuration", exact=True).click()
+    expect(editor.locator("#field-candidate-full_name")).to_have_value("Alex")
+    editor.locator("#field-candidate-full_name").fill("Alex Example")
+    assert export_settings(editor, tmp_path).candidate["full_name"] == "Alex Example"
+    assert editor.evaluate("window.pickerCalls") == 1
+    expect(editor.locator("#save-guidance")).to_contain_text("/private/")
+
+
+def test_save_renews_permission_without_reopening_the_picker(editor, tmp_path):
+    export_settings(editor, tmp_path)
+    editor.evaluate("window.permission = 'prompt'")
+    editor.locator("#field-candidate-full_name").fill("Alex")
+    export_settings(editor, tmp_path)
+    assert editor.evaluate("window.pickerCalls") == 1
+    assert editor.evaluate("window.permissionRequests") == 1
+    editor.evaluate("window.permission = 'prompt'; window.denyPermission = true")
+    editor.locator("#field-candidate-full_name").fill("Unsaved edit")
+    count = editor.evaluate("window.saveCount")
+    editor.locator("#save-folder-button").click()
+    expect(editor.locator("#toast")).to_contain_text("Folder access was not granted")
+    expect(editor.locator("#dirty-indicator")).to_be_visible()
+    assert editor.evaluate("window.saveCount") == count
+
+
+def test_new_profile_reuses_the_connected_repository(editor, tmp_path):
+    export_settings(editor, tmp_path)
+    editor.get_by_role("button", name="New", exact=True).click()
+    editor.locator("#field-candidate-full_name").fill("New profile")
+    assert export_settings(editor, tmp_path).candidate["full_name"] == "New profile"
+    assert editor.evaluate("window.pickerCalls") == 1
+
+
+def test_canceling_repository_change_keeps_the_previous_destination(editor, tmp_path):
+    export_settings(editor, tmp_path)
+    editor.evaluate("window.cancelPicker = true")
+    editor.get_by_role("button", name="Change repository", exact=True).click()
+    expect(editor.locator("#save-folder-button")).to_be_enabled()
+    editor.evaluate("window.cancelPicker = false")
+    editor.locator("#field-candidate-full_name").fill("Same destination")
+    assert export_settings(editor, tmp_path).candidate["full_name"] == "Same destination"
+    assert editor.evaluate("window.pickerCalls") == 2  # One connection and one canceled change.
+
+
+@pytest.mark.parametrize("failure", ["cancel", "invalid_repository", "pdf_write"])
+def test_failed_or_canceled_save_keeps_edits_and_does_not_write_yaml(editor, failure):
+    editor.get_by_role("button", name="Documents & cover letters", exact=True).click()
+    editor.locator("#cv-file-input").set_input_files(
+        {"name": "cv.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4\n%%EOF\n"}
+    )
+    if failure == "cancel":
+        editor.evaluate("window.cancelPicker = true")
+    elif failure == "invalid_repository":
+        editor.evaluate("window.invalidRepository = true")
+    else:
+        editor.evaluate("window.failWrite = 'cv.pdf'")
+    editor.locator("#save-folder-button").click()
+    if failure != "cancel":
+        expect(editor.locator("#toast")).to_contain_text("Could not save")
+    expect(editor.locator("#save-folder-button")).to_be_enabled()
+    expect(editor.locator("#dirty-indicator")).to_be_visible()
+    assert "instructions.yaml" not in editor.evaluate("window.savedFiles")
+
+
+@pytest.mark.parametrize("with_cv", [False, True])
+@pytest.mark.parametrize("with_transcript", [False, True])
+def test_primary_save_exports_a_single_archive_without_folder_access(
+    editor, tmp_path, with_cv, with_transcript
+):
     editor.add_init_script(
-        "Object.defineProperty(window, 'showDirectoryPicker', {value: undefined});"
+        "Object.defineProperty(window, 'showDirectoryPicker', "
+        "{value: undefined, configurable: true});"
     )
     editor.reload()
-    button = editor.get_by_role("button", name="Download for private/", exact=True)
+    button = editor.get_by_role("button", name="Export setup (.zip)", exact=True)
     expect(button).to_be_visible()
     assert editor.locator(".toolbar .primary").get_attribute("id") == "save-folder-button"
     expect(editor.locator("#save-guidance")).to_be_visible()
+    original = b"%PDF-1.4\n% Fictional CV\n%%EOF\n"
+    if with_cv:
+        editor.get_by_role("button", name="Documents & cover letters", exact=True).click()
+        editor.locator("#cv-file-input").set_input_files(
+            {"name": "résumé.pdf", "mimeType": "application/pdf", "buffer": original}
+        )
+    records = b"%PDF-1.4\n% Fictional transcript\n%%EOF\n"
+    if with_transcript:
+        editor.get_by_role("button", name="Documents & cover letters", exact=True).click()
+        editor.locator("#transcript-file-input").set_input_files(
+            {"name": "records.pdf", "mimeType": "application/pdf", "buffer": records}
+        )
     with editor.expect_download() as event:
         button.click()
     path = tmp_path / event.value.suggested_filename
     event.value.save_as(path)
-    assert load_settings(path).version == 2
+    with ZipFile(path) as archive:
+        assert archive.testzip() is None
+        expected = {"private/instructions.yaml"}
+        if with_cv:
+            expected.add("private/résumé.pdf")
+            assert archive.read("private/résumé.pdf") == original
+        if with_transcript:
+            expected.add("private/records.pdf")
+            assert archive.read("private/records.pdf") == records
+        assert set(archive.namelist()) == expected
+        config = tmp_path / "instructions.yaml"
+        config.write_bytes(archive.read("private/instructions.yaml"))
+        assert load_settings(config).version == 2
+
+
+def test_repository_handle_is_restored_across_reload_and_scoped_to_checkout(chromium):
+    class EditorHandler(SimpleHTTPRequestHandler):
+        def translate_path(self, path):
+            return super().translate_path(re.sub(r"^/(copy-a|copy-b)/config-editor/", "/", path))
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(EditorHandler, directory=str(EDITOR)))
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    context = chromium.new_context()
+    try:
+        page = context.new_page()
+        failures = []
+        page.on("pageerror", lambda error: failures.append(str(error)))
+        page.add_init_script("""window.showDirectoryPicker = async () => {
+          localStorage.setItem('pickerCalls', Number(localStorage.getItem('pickerCalls') || 0) + 1);
+          const storage = await navigator.storage.getDirectory();
+          const root = await storage.getDirectoryHandle(
+            location.pathname.split('/')[1], {create: true});
+          const editor = await root.getDirectoryHandle('config-editor', {create: true});
+          await editor.getFileHandle('index.html', {create: true});
+          return root;
+        };""")
+        origin = f"http://127.0.0.1:{server.server_port}"
+        first = f"{origin}/copy-a/config-editor/index.html"
+        page.goto(first)
+        page.locator("#field-candidate-full_name").fill("Alex in first checkout")
+        page.locator("#save-folder-button").click()
+        expect(page.locator("#toast")).to_contain_text("copy-a/private/")
+        expect(page.locator("#save-guidance")).to_contain_text("remembered")
+        page.reload()
+        expect(page.locator("#save-guidance")).to_contain_text("copy-a/private/")
+        page.get_by_role("button", name="Open configuration", exact=True).click()
+        expect(page.locator("#field-candidate-full_name")).to_have_value("Alex in first checkout")
+        assert page.evaluate("localStorage.getItem('pickerCalls')") == "1"
+        page.goto(f"{origin}/copy-b/config-editor/index.html")
+        expect(page.locator("#save-folder-button")).to_be_enabled()
+        expect(page.locator("#change-folder-button")).to_be_hidden()
+        page.locator("#save-folder-button").click()
+        expect(page.locator("#toast")).to_contain_text("copy-b/private/")
+        assert page.evaluate("localStorage.getItem('pickerCalls')") == "2"
+        page.goto(first)
+        page.get_by_role("button", name="Open configuration", exact=True).click()
+        expect(page.locator("#field-candidate-full_name")).to_have_value("Alex in first checkout")
+        assert page.evaluate("localStorage.getItem('pickerCalls')") == "2"
+        assert not failures
+    finally:
+        context.close()
+        server.shutdown()
+        server.server_close()
+        worker.join()
 
 
 def test_system_dark_mode_keeps_the_light_theme_and_mobile_layout(editor):

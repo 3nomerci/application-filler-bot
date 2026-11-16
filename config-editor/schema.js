@@ -38,10 +38,17 @@
         field('candidate.relocation', 'Relocation preference', 'relocation', 'Choose whether you would move for a job, or describe where you would move.', { placeholder: 'Open to relocating within the EU' }),
         field('candidate.start_date', 'Availability / start date', 'text', 'Describe when you could start work.', { placeholder: 'Immediately, or after a two-month notice period' }),
         field('candidate.employment_status', 'Employment status', 'nullable', 'Employed, unemployed or student; this is separate from immigration/work rights.'),
-        field('candidate.preferred_work_locations', 'Preferred work locations', 'tags', 'Rank cities or countries, separated by commas. Residence does not establish your preferred workplace.', { placeholder: 'Paris, Madrid' }),
+        field('candidate.preferred_work_locations', 'Preferred cities (highest preference first)', 'ranked', 'Enter one city per line, starting with your first choice. Include the country when a city name could be ambiguous.', {
+          placeholder: 'Paris, France\nZurich, Switzerland\nBerlin, Germany', wide: true,
+          help: 'This is your general ranking across applications. If a form offers only some of these cities, the bot keeps their relative order and ignores cities that are not offered. For example, with the order Paris, Zurich, Berlin, a Zurich/Berlin form gets Zurich first. Other offered cities follow the policy below. A ranking does not establish your work authorization or override your relocation preference.'
+        }),
+        field('candidate.preferred_work_locations_unlisted', 'Other offered cities', 'select', 'Choose what the bot should do with offered cities missing from your ranked list.', {
+          choices: [['ask', 'Ask me how to rank other cities'], ['any_order', 'Put other cities last, in any order']], wide: true, default: 'ask',
+          help: 'Any order gives the bot permission to put unlisted cities after all matching ranked choices, using the form’s order for the remainder. It does not claim that you prefer one unlisted city over another, supply an immigration status or change your relocation preference.'
+        }),
         field('candidate.work_arrangement', 'Work arrangement', 'nullable', 'Your remote, hybrid or on-site preference, including any flexibility.'),
         field('candidate.preferred_technical_areas', 'Preferred technical areas', 'tags', 'Rank your interests, separated by commas, for forms offering several teams.', { placeholder: 'Data engineering, Backend' }),
-        field('candidate.referral_source', 'How you found the jobs', 'nullable', 'The actual source; describe exceptions per employer if needed. Opening their website is not the discovery source.'),
+        field('candidate.referral_source', 'How you found the jobs', 'nullable', 'Optional. An actual source here overrides the LinkedIn default. Describe exceptions per employer if needed.'),
         field('candidate.pronouns', 'Pronouns', 'nullable', 'Optional. Separate from gender; optional disclosures still follow your policy.'),
         field('candidate.current_enrollment', 'Current studies', 'nullable', 'Whether and where you are currently enrolled, if known.'),
         field('candidate.future_studies', 'Future study plans', 'nullable', 'Include tentative plans if relevant; leave blank rather than assuming none.'),
@@ -113,6 +120,14 @@
           choices: [['trusted', 'Trusted — use supported answers'], ['review', 'Review — approve suggested answers']],
           help: 'Topic-specific rules below still apply. For example, Ask me for consent continues to require a decision even in Trusted mode. Neither mode authorizes invented personal facts.'
         }),
+        field('answers.defaults.referral_source', 'Default discovery source', 'nullable', 'Use this answer for “Where did you hear about us?” when you have not supplied another source.', {
+          placeholder: 'LinkedIn',
+          help: 'The bot selects the matching option or enters this text. If it is unavailable and the question is required, the bot asks you. It never invents a named referrer. Leave blank to ask instead of using a default.'
+        }),
+        field('answers.defaults.office_attendance', 'Default office attendance', 'select', 'Answer Yes to office attendance, including a stated number of days per week, unless your preferences say otherwise.', {
+          choices: [['true', 'Yes — willing to attend'], ['false', 'No — not willing to attend'], ['null', 'Ask me when required']], nullableBoolean: true,
+          help: 'An explicit remote-only preference, day limit, location restriction or specific instruction takes priority. This setting does not authorize assessments, legal declarations or work-rights answers.'
+        }),
         field('answers.protected_category', 'Protected-category policy', 'select', 'Choose how the bot handles questions about protected employment categories.', {
           choices: [['negative_or_skip', 'Use membership: No, skip or ask'], ['ask', 'Always ask me'], ['skip', 'Always skip']],
           help: 'With Use membership, an explicit No in your profile allows a No answer; Yes causes the question to be skipped; Unknown causes the bot to ask. This rule applies only to the employment category, not every sensitive disclosure.'
@@ -165,14 +180,18 @@
     },
     {
       id: 'documents', title: 'Documents & cover letters', eyebrow: 'APPLICATION MATERIALS',
-      description: 'Choose your CV and give the writer facts and style preferences for optional cover letters.',
+      description: 'Choose your documents and give the writer facts and style preferences for cover letters.',
       fields: [
         field('documents.cv', 'CV filename', 'text', 'Upload a finished PDF (up to 10 MB), or enter its filename if it is already in private/.', {
           placeholder: 'alex-example-cv.pdf',
-          help: 'The PDF is uploaded to employers unchanged. Selecting it here updates the filename; Save to private/ copies the selected PDF together with your configuration. If direct folder saving is unavailable, download the files and move them to private/ yourself. A file in a subfolder can be entered as documents/cv.pdf.'
+          help: 'The PDF is uploaded to employers unchanged. Selecting it here updates the filename; Save to private/ copies selected PDFs together with your configuration. After choosing your cloned repository once, saves reuse its private/ folder. Browsers without direct folder access export a setup archive. A CV already stored in a subfolder can be entered as documents/cv.pdf.'
         }),
-        field('documents.cover_letter', 'Cover-letter behavior', 'select', 'Choose whether to generate letters immediately, review them first, or skip them.', {
-          choices: [['trusted', 'Generate when needed'], ['review', 'Review before use'], ['skip', 'Skip cover letters']],
+        field('documents.transcript', 'Transcript of records filename', 'nullable', 'Optional. Upload your academic transcript PDF (up to 10 MB), or keep transcript.pdf if you will place it in private/.', {
+          placeholder: 'transcript.pdf',
+          help: 'Save to private/ copies a selected transcript alongside your CV and configuration. The bot uploads it unchanged only when an application requests academic records. An absent file is fine; a required request makes the bot ask you. Leave blank or choose Do not use a transcript to disable it; existing files are never deleted. Use a different filename from your CV.'
+        }),
+        field('documents.cover_letter', 'Cover-letter behavior', 'select', 'Write a tailored letter whenever the form offers a cover-letter field, including optional fields.', {
+          choices: [['trusted', 'Always write when offered'], ['review', 'Write and review before use'], ['skip', 'Skip cover letters']],
           help: 'Letters can be entered into a textbox or generated as a document, depending on the application. This decision is separate from permission to submit the final application.'
         }),
         field('documents.retention', 'Generated-letter retention', 'select', 'Choose whether generated letters stay on disk after a run.', {
@@ -282,7 +301,8 @@ candidate:
   existing_work_statuses: null # Unknown, not a claim that no statuses exist.
   employment_status: null # Employed/unemployed/student; separate from work authorization.
   relocation: ""
-  preferred_work_locations: [] # Rank countries/cities, e.g. [Paris, Madrid]; empty means unknown.
+  preferred_work_locations: [] # Cities from most to least preferred; empty means unknown.
+  preferred_work_locations_unlisted: ask # ask or any_order (append other offered cities).
   work_arrangement: null # Your preference for remote, hybrid or on-site work.
   preferred_technical_areas: [] # Ranked interests for forms offering several teams/specialties.
   referral_source: null # How you actually found these jobs; never assume the employer's website.
@@ -339,7 +359,8 @@ instructions: >-
   Ask if job location, personal status or question meaning cannot be established.
   Use my ranked locations and work preferences when supplied; residence and willingness
   to relocate alone do not establish a preferred work location or arrangement.
-  Never invent referral sources, precise language levels, academic rankings or study plans.
+  Use the discovery-source and office-attendance defaults unless my specific preferences override them.
+  Never invent named referrers, precise language levels, academic rankings or study plans.
   Ask when a required grade cannot be represented truthfully; skip optional grade questions.
   Ordinary application-data consent does not authorize proctoring or assessment commitments.
   Flag account/profile-creation steps for manual help before proceeding.
@@ -349,6 +370,9 @@ answers:
   mode: trusted # trusted: allow supported inference; review: approve inferred answers first.
   protected_category: negative_or_skip # Employment protected category only; ask/skip also supported.
   cookies: accept_when_needed # Accept cookies needed to access the application; use ask to review.
+  defaults:
+    referral_source: LinkedIn # When no actual source is supplied; use only if the form allows it.
+    office_attendance: true # Ordinary on-site/day-count questions; explicit preferences override.
   topics:
     work_authorization: infer
     salary: infer
@@ -367,6 +391,7 @@ salary:
 
 documents:
   cv: cv.pdf # Put your approved fixed PDF in private/cv.pdf. Never modified by the agent.
+  transcript: transcript.pdf # Optional fixed PDF in private/. Missing is fine; null disables it.
   cover_letter: trusted # trusted, review, or skip. Independent of final submission.
   retention: keep # keep or delete_after_run; affects only generated cover-letter MD/PDF.
   background: "" # Your truthful experience/skills/achievements; not a fictional example.
